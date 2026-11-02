@@ -133,4 +133,22 @@ app/
 │       ├── assignments.tsx
 │       └── history.tsx
 └── components/ui.tsx
+test/                       # shared test setup and helpers
 ```
+
+## Tests
+
+```bash
+npm test             # run once
+npm run test:watch   # rerun on save
+```
+
+Tests use [Vitest](https://vitest.dev) and sit next to the code they cover
+(`assign.server.test.ts` next to `assign.server.ts`, and so on). Each test file
+gets its own throwaway SQLite database, so your real data is never touched, and
+no emails are sent. Settings from `.env` are ignored during tests; the fixed
+values are in [vitest.config.ts](vitest.config.ts).
+
+Page tests render the real route components with React Testing Library and
+jsdom, using the real loaders and actions, so clicking "Make assignments" in a
+test really draws names in the test database.
