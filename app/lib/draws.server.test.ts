@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addPeople, resetDb } from "../../test/helpers";
+import { addPeople, resetDb, restrict } from "../../test/helpers";
 import {
   checkDraw,
   createDraw,
@@ -9,7 +9,13 @@ import {
   sendDrawEmails,
   type Draw,
 } from "./draws.server";
-import { deleteParticipant, listParticipants, updateParticipant } from "./participants.server";
+import {
+  deleteParticipant,
+  listParticipants,
+  listRestrictions,
+  updateParticipant,
+} from "./participants.server";
+import { DrawError } from "./assign.server";
 
 const { sendAssignmentEmail } = vi.hoisted(() => ({
   sendAssignmentEmail: vi.fn<typeof import("./email.server").sendAssignmentEmail>(
@@ -25,6 +31,8 @@ const pairsOf = (draw: Draw) =>
   draw.assignments.map((a) => `${a.giverName} → ${a.receiverName}`).sort();
 const find = (draw: Draw, giverName: string) =>
   draw.assignments.find((a) => a.giverName === giverName)!;
+
+const check = () => checkDraw(latest(), listParticipants(), listRestrictions());
 
 /** Draws names and emails everyone, so the draw is kept in history. */
 async function keptDraw(name: string) {
@@ -57,6 +65,36 @@ describe("createDraw", () => {
     deleteParticipant(alice.id);
 
     expect(() => createDraw("Second")).toThrow("Need at least 3 participants.");
+    expect(listDraws().map((d) => d.name)).toEqual(["First"]);
+  });
+
+  it("follows everyone's restrictions", () => {
+    const [alice, bob, carol, dave] = addPeople("Alice", "Bob", "Carol", "Dave");
+    // Two couples, and Alice won't buy for Carol either. Only Alice → Dave →
+    // Bob → Carol → Alice fits.
+    restrict(alice, bob, carol);
+    restrict(bob, alice);
+    restrict(carol, dave);
+    restrict(dave, carol);
+
+    for (let redraw = 0; redraw < 5; redraw++) {
+      createDraw("2026");
+      expect(pairsOf(latest())).toEqual([
+        "Alice → Dave",
+        "Bob → Carol",
+        "Carol → Alice",
+        "Dave → Bob",
+      ]);
+    }
+  });
+
+  it("leaves the current draw alone when no draw fits the restrictions", () => {
+    const [alice, bob] = addPeople("Alice", "Bob", "Carol");
+    createDraw("First");
+    restrict(alice, bob);
+    restrict(bob, alice);
+
+    expect(() => createDraw("Second")).toThrow(DrawError);
     expect(listDraws().map((d) => d.name)).toEqual(["First"]);
   });
 
@@ -177,9 +215,10 @@ describe("checkDraw", () => {
   it("is up to date right after drawing", () => {
     addPeople("Alice", "Bob", "Carol");
     createDraw("2026");
-    expect(checkDraw(latest(), listParticipants())).toEqual({
+    expect(check()).toEqual({
       added: [],
       removed: [],
+      restricted: 0,
       upToDate: true,
       sent: 0,
       unsent: 3,
@@ -191,7 +230,7 @@ describe("checkDraw", () => {
     addPeople("Alice", "Bob", "Carol");
     createDraw("2026");
     addPeople("Dave");
-    expect(checkDraw(latest(), listParticipants())).toMatchObject({
+    expect(check()).toMatchObject({
       added: ["Dave"],
       removed: [],
       upToDate: false,
@@ -202,11 +241,25 @@ describe("checkDraw", () => {
     const [, bob] = addPeople("Alice", "Bob", "Carol", "Dave");
     createDraw("2026");
     deleteParticipant(bob.id);
-    expect(checkDraw(latest(), listParticipants())).toMatchObject({
+    expect(check()).toMatchObject({
       added: [],
       removed: ["Bob"],
       upToDate: false,
     });
+  });
+
+  it("counts assignments that break a restriction set after the draw", () => {
+    const people = addPeople("Alice", "Bob", "Carol", "Dave");
+    createDraw("2026");
+    const { assignments } = latest();
+    const byId = (id: number | null) => people.find((p) => p.id === id)!;
+
+    // Rule out who two of them drew.
+    for (const a of assignments.slice(0, 2)) restrict(byId(a.giverId), byId(a.receiverId));
+    expect(check()).toMatchObject({ added: [], removed: [], restricted: 2, upToDate: false });
+
+    createDraw("2026");
+    expect(check()).toMatchObject({ restricted: 0, upToDate: true });
   });
 
   it("only counts real sends, and locks the draw after the first one", async () => {
@@ -215,7 +268,7 @@ describe("checkDraw", () => {
 
     sendAssignmentEmail.mockResolvedValue("logged");
     await sendDrawEmails(latest(), "all");
-    expect(checkDraw(latest(), listParticipants())).toMatchObject({
+    expect(check()).toMatchObject({
       sent: 0,
       unsent: 3,
       locked: false,
@@ -223,7 +276,7 @@ describe("checkDraw", () => {
 
     sendAssignmentEmail.mockResolvedValue("sent");
     await resendAssignmentEmail(latest(), latest().assignments[0].id);
-    expect(checkDraw(latest(), listParticipants())).toMatchObject({
+    expect(check()).toMatchObject({
       sent: 1,
       unsent: 2,
       locked: true,

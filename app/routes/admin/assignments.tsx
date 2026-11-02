@@ -2,7 +2,7 @@ import { useState } from "react";
 import { data, Form, Link, useFetcher, useNavigation } from "react-router";
 import type { Route } from "./+types/assignments";
 import { EmailStatusBadge, LocalTime, Notice, PageHeader } from "~/components/ui";
-import { MIN_PARTICIPANTS } from "~/lib/assign.server";
+import { DrawError, MIN_PARTICIPANTS } from "~/lib/assign.server";
 import {
   checkDraw,
   createDraw,
@@ -13,7 +13,7 @@ import {
   type Draw,
 } from "~/lib/draws.server";
 import { emailConfigured } from "~/lib/email.server";
-import { listParticipants } from "~/lib/participants.server";
+import { listParticipants, listRestrictions } from "~/lib/participants.server";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Assignments · Secret Santa" }];
@@ -23,12 +23,14 @@ const defaultDrawName = () => `Secret Santa ${new Date().getFullYear()}`;
 
 export async function loader() {
   const participants = listParticipants();
+  const restrictions = listRestrictions();
   const draw = getLatestDraw();
   return {
     participantCount: participants.length,
+    restrictionCount: restrictions.length,
     minParticipants: MIN_PARTICIPANTS,
     draw,
-    status: draw ? checkDraw(draw, participants) : null,
+    status: draw ? checkDraw(draw, participants, restrictions) : null,
     emailConfigured,
     defaultName: defaultDrawName(),
   };
@@ -49,7 +51,14 @@ export async function action({ request }: Route.ActionArgs): Promise<Result> {
     const name = String(form.get("name") ?? "").trim() || defaultDrawName();
     if (name.length > 100) return fail("Keep the name under 100 characters.");
 
-    const { count, replaced, repeats } = createDraw(name);
+    let result;
+    try {
+      result = createDraw(name);
+    } catch (error) {
+      if (error instanceof DrawError) return fail(error.message);
+      throw error;
+    }
+    const { count, replaced, repeats } = result;
     let message = `${replaced ? "Redrew" : "Made"} assignments for ${count} people.`;
     if (repeats > 0) {
       message += ` ${plural(repeats, "pairing")} from last time couldn't be avoided.`;
@@ -65,8 +74,12 @@ export async function action({ request }: Route.ActionArgs): Promise<Result> {
   }
 
   if (intent === "send") {
-    if (!checkDraw(draw, listParticipants()).upToDate) {
+    const status = checkDraw(draw, listParticipants(), listRestrictions());
+    if (status.added.length > 0 || status.removed.length > 0) {
       return fail("The participant list changed since this draw. Make new assignments first.");
+    }
+    if (status.restricted > 0) {
+      return fail("The restrictions changed since this draw. Make new assignments first.");
     }
     const mode = form.get("mode") === "all" ? "all" : "unsent";
     const { sent, logged, failed } = await sendDrawEmails(draw, mode);
@@ -99,7 +112,8 @@ export async function action({ request }: Route.ActionArgs): Promise<Result> {
 }
 
 export default function Assignments({ loaderData, actionData }: Route.ComponentProps) {
-  const { draw, status, participantCount, minParticipants, defaultName } = loaderData;
+  const { draw, status, participantCount, restrictionCount, minParticipants, defaultName } =
+    loaderData;
   const navigation = useNavigation();
   const pendingIntent =
     navigation.state === "submitting" ? navigation.formData?.get("intent") : undefined;
@@ -165,6 +179,8 @@ export default function Assignments({ loaderData, actionData }: Route.ComponentP
                 : draw
                   ? "This starts a new draw. The current one stays in History, and its pairings are avoided where possible."
                   : "Everyone goes into one random loop, so nobody gets themselves and no two people get each other."}
+              {restrictionCount > 0 &&
+                ` ${plural(restrictionCount, "restriction")} from the Participants page will be followed.`}
             </p>
           </Form>
         ) : (
@@ -195,6 +211,7 @@ function CurrentDraw({
   const sending = navigation.state === "submitting" && navigation.formData?.get("intent") === "send";
 
   const total = draw.assignments.length;
+  const participantsChanged = status.added.length > 0 || status.removed.length > 0;
   const mode = status.unsent > 0 ? "unsent" : "all";
   const sendLabel =
     status.sent === 0
@@ -238,10 +255,22 @@ function CurrentDraw({
       {!status.upToDate && (
         <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-800">
           <Notice tone="warning">
-            The participant list changed since this draw
-            {status.added.length > 0 && <> (added {status.added.join(", ")})</>}
-            {status.removed.length > 0 && <> (removed {status.removed.join(", ")})</>}. Make new
-            assignments before emailing everyone.
+            {participantsChanged && (
+              <>
+                The participant list changed since this draw
+                {status.added.length > 0 && <> (added {status.added.join(", ")})</>}
+                {status.removed.length > 0 && <> (removed {status.removed.join(", ")})</>}.{" "}
+              </>
+            )}
+            {status.restricted > 0 && (
+              <>
+                {status.restricted === 1
+                  ? "1 assignment breaks a restriction"
+                  : `${status.restricted} assignments break restrictions`}{" "}
+                set since this draw.{" "}
+              </>
+            )}
+            Make new assignments before emailing everyone.
           </Notice>
         </div>
       )}

@@ -4,8 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDraw, getLatestDraw, sendDrawEmails } from "~/lib/draws.server";
-import { deleteParticipant } from "~/lib/participants.server";
-import { addPeople, HydrateFallback, postRequest, resetDb, routeArgs } from "../../../test/helpers";
+import { deleteParticipant, listParticipants } from "~/lib/participants.server";
+import {
+  addPeople,
+  HydrateFallback,
+  postRequest,
+  resetDb,
+  restrict,
+  routeArgs,
+} from "../../../test/helpers";
 import Assignments, { action, loader } from "./assignments";
 
 const { sendAssignmentEmail } = vi.hoisted(() => ({
@@ -42,6 +49,7 @@ describe("loader", () => {
     addPeople("Alice", "Bob");
     expect(await loader()).toEqual({
       participantCount: 2,
+      restrictionCount: 0,
       minParticipants: 3,
       draw: null,
       status: null,
@@ -93,6 +101,21 @@ describe("action", () => {
       expect(latest().name).toBe("Secret Santa 2030");
     });
 
+    it("says when no draw fits the restrictions, and keeps the current one", async () => {
+      const [alice, bob] = addPeople("Alice", "Bob", "Carol");
+      createDraw("2026");
+      const before = latest();
+      restrict(alice, bob);
+      restrict(bob, alice);
+
+      expect(await submit({ intent: "draw", name: "2026" })).toEqual({
+        ok: false,
+        message:
+          "Couldn't find a way to draw names that fits everyone's restrictions. Try removing one.",
+      });
+      expect(latest()).toEqual(before);
+    });
+
     it("rejects names over 100 characters", async () => {
       addPeople("Alice", "Bob", "Carol");
       expect(await submit({ intent: "draw", name: "x".repeat(101) })).toEqual({
@@ -131,6 +154,18 @@ describe("action", () => {
       expect(await send()).toEqual({
         ok: false,
         message: "The participant list changed since this draw. Make new assignments first.",
+      });
+      expect(sendAssignmentEmail).not.toHaveBeenCalled();
+    });
+
+    it("refuses when an assignment breaks a restriction set since the draw", async () => {
+      const people = listParticipants();
+      const alice = assignmentOf("Alice");
+      restrict(people[0], people.find((p) => p.id === alice.receiverId)!);
+
+      expect(await send()).toEqual({
+        ok: false,
+        message: "The restrictions changed since this draw. Make new assignments first.",
       });
       expect(sendAssignmentEmail).not.toHaveBeenCalled();
     });
@@ -385,6 +420,32 @@ describe("page", () => {
       if (a.giverName === "Bob" || a.receiverName === "Bob") expect(button).toBeDisabled();
       else expect(button).toBeEnabled();
     }
+  });
+
+  it("blocks emailing everyone after a restriction rules out an assignment", async () => {
+    const people = addPeople("Alice", "Bob", "Carol", "Dave");
+    createDraw("2026");
+    const alice = assignmentOf("Alice");
+    restrict(people[0], people.find((p) => p.id === alice.receiverId)!);
+    renderPage();
+
+    // Doesn't say whose, so the organizer's surprise isn't spoiled.
+    expect(
+      await screen.findByText(
+        "1 assignment breaks a restriction set since this draw. Make new assignments before emailing everyone.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Email all 4" })).toBeDisabled();
+  });
+
+  it("mentions restrictions will be followed", async () => {
+    const [alice, bob] = addPeople("Alice", "Bob", "Carol", "Dave");
+    restrict(alice, bob);
+    restrict(bob, alice);
+    renderPage();
+    expect(
+      await screen.findByText(/2 restrictions from the Participants page will be followed\./),
+    ).toBeInTheDocument();
   });
 
   it("starts a new draw once the last one has been emailed", async () => {

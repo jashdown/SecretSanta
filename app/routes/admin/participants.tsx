@@ -6,18 +6,35 @@ import {
   createParticipant,
   deleteParticipant,
   listParticipants,
+  listRestrictions,
+  MAX_RESTRICTIONS,
   parseParticipantForm,
+  parseRestrictionsForm,
   updateParticipant,
   type Participant,
+  type ParticipantErrors,
 } from "~/lib/participants.server";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Participants · Secret Santa" }];
 }
 
+type Person = Participant & {
+  /** Ids of the people this person can't buy for. */
+  cantGiveTo: number[];
+};
+
 export async function loader() {
-  return { participants: listParticipants() };
+  const restrictions = listRestrictions();
+  const participants: Person[] = listParticipants().map((p) => ({
+    ...p,
+    cantGiveTo: restrictions.filter((r) => r.giverId === p.id).map((r) => r.receiverId),
+  }));
+  return { participants, maxRestrictions: MAX_RESTRICTIONS };
 }
+
+const invalid = (errors: ParticipantErrors) =>
+  data({ ok: false as const, errors }, { status: 400 });
 
 export async function action({ request }: Route.ActionArgs) {
   const form = await request.formData();
@@ -29,13 +46,23 @@ export async function action({ request }: Route.ActionArgs) {
     return { ok: true as const };
   }
 
-  if (intent === "create" || intent === "update") {
-    const result = parseParticipantForm(form, intent === "update" ? id : undefined);
-    if (!result.ok) {
-      return data({ ok: false as const, errors: result.errors }, { status: 400 });
+  if (intent === "create") {
+    const result = parseParticipantForm(form);
+    if (!result.ok) return invalid(result.errors);
+    createParticipant(result.value);
+    return { ok: true as const };
+  }
+
+  if (intent === "update") {
+    const result = parseParticipantForm(form, id);
+    const restrictions = parseRestrictionsForm(form, id);
+    if (!result.ok || !restrictions.ok) {
+      return invalid({
+        ...(!result.ok && result.errors),
+        ...(!restrictions.ok && restrictions.errors),
+      });
     }
-    if (intent === "create") createParticipant(result.value);
-    else updateParticipant(id, result.value);
+    updateParticipant(id, result.value, restrictions.value);
     return { ok: true as const };
   }
 
@@ -43,11 +70,14 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Participants({ loaderData }: Route.ComponentProps) {
-  const { participants } = loaderData;
+  const { participants, maxRestrictions } = loaderData;
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Participants" description="Everyone taking part in the gift exchange." />
+      <PageHeader
+        title="Participants"
+        description="Everyone taking part in the gift exchange. Use Edit to choose who someone can't give to."
+      />
       <AddParticipant />
       <section className="card">
         <h2 className="border-b border-stone-200 px-5 py-3 font-semibold dark:border-stone-800">
@@ -60,7 +90,12 @@ export default function Participants({ loaderData }: Route.ComponentProps) {
         ) : (
           <ul className="divide-y divide-stone-200 dark:divide-stone-800">
             {participants.map((participant) => (
-              <ParticipantRow key={participant.id} participant={participant} />
+              <ParticipantRow
+                key={participant.id}
+                participant={participant}
+                everyone={participants}
+                maxRestrictions={maxRestrictions}
+              />
             ))}
           </ul>
         )}
@@ -98,7 +133,9 @@ function AddParticipant() {
   );
 }
 
-function ParticipantRow({ participant }: { participant: Participant }) {
+type RowProps = { participant: Person; everyone: Person[]; maxRestrictions: number };
+
+function ParticipantRow({ participant, everyone, maxRestrictions }: RowProps) {
   const [editing, setEditing] = useState(false);
   const fetcher = useFetcher<typeof action>();
 
@@ -108,10 +145,19 @@ function ParticipantRow({ participant }: { participant: Participant }) {
   if (editing) {
     return (
       <li className="px-5 py-3">
-        <EditParticipant participant={participant} onDone={() => setEditing(false)} />
+        <EditParticipant
+          participant={participant}
+          everyone={everyone}
+          maxRestrictions={maxRestrictions}
+          onDone={() => setEditing(false)}
+        />
       </li>
     );
   }
+
+  const cantGiveTo = participant.cantGiveTo
+    .map((id) => everyone.find((p) => p.id === id)?.name)
+    .filter(Boolean);
 
   return (
     <li className="flex items-center gap-3 px-5 py-3">
@@ -119,6 +165,11 @@ function ParticipantRow({ participant }: { participant: Participant }) {
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium">{participant.name}</p>
         <p className="truncate text-sm text-stone-500">{participant.email}</p>
+        {cantGiveTo.length > 0 && (
+          <p className="mt-0.5 truncate text-xs text-amber-800 dark:text-amber-300">
+            Can't give to {cantGiveTo.join(" or ")}
+          </p>
+        )}
       </div>
       <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>
         Edit
@@ -140,10 +191,16 @@ function ParticipantRow({ participant }: { participant: Participant }) {
   );
 }
 
-function EditParticipant({ participant, onDone }: { participant: Participant; onDone: () => void }) {
+function EditParticipant({
+  participant,
+  everyone,
+  maxRestrictions,
+  onDone,
+}: RowProps & { onDone: () => void }) {
   const fetcher = useFetcher<typeof action>();
   const errors = fetcher.data && !fetcher.data.ok ? fetcher.data.errors : undefined;
   const busy = fetcher.state !== "idle";
+  const others = everyone.filter((p) => p.id !== participant.id);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) onDone();
@@ -175,7 +232,15 @@ function EditParticipant({ participant, onDone }: { participant: Participant; on
         error={errors?.email}
         required
       />
-      <div className="flex gap-2">
+      {others.length > 0 && (
+        <RestrictionPicker
+          others={others}
+          selected={participant.cantGiveTo}
+          max={maxRestrictions}
+          error={errors?.cantGiveTo}
+        />
+      )}
+      <div className="flex gap-2 sm:col-start-3 sm:row-start-1">
         <button className="btn btn-green" disabled={busy}>
           {busy ? "Saving…" : "Save"}
         </button>
@@ -184,6 +249,53 @@ function EditParticipant({ participant, onDone }: { participant: Participant; on
         </button>
       </div>
     </fetcher.Form>
+  );
+}
+
+function RestrictionPicker({
+  others,
+  selected,
+  max,
+  error,
+}: {
+  others: Participant[];
+  selected: number[];
+  max: number;
+  error?: string;
+}) {
+  const id = useId();
+  return (
+    <fieldset className="sm:col-span-2 sm:row-start-2">
+      <legend className="label">Can't give to</legend>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Array.from({ length: max }, (_, index) => (
+          <select
+            key={index}
+            name="cantGiveTo"
+            className="input"
+            aria-label={`Can't give to (${index + 1} of ${max})`}
+            aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
+            aria-invalid={error ? true : undefined}
+            defaultValue={selected[index] ?? ""}
+          >
+            <option value="">No one</option>
+            {others.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        ))}
+      </div>
+      <p id={`${id}-hint`} className="mt-1 text-xs text-stone-500">
+        This only works one way. For a couple, set it for both of them.
+      </p>
+      {error && (
+        <p id={`${id}-error`} className="field-error">
+          {error}
+        </p>
+      )}
+    </fieldset>
   );
 }
 

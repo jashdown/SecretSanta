@@ -3,14 +3,29 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRoutesStub } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listParticipants } from "~/lib/participants.server";
-import { addPeople, HydrateFallback, postRequest, resetDb, routeArgs } from "../../../test/helpers";
+import { deleteParticipant, listParticipants, listRestrictions } from "~/lib/participants.server";
+import {
+  addPeople,
+  HydrateFallback,
+  postRequest,
+  resetDb,
+  restrict,
+  routeArgs,
+} from "../../../test/helpers";
 import Participants, { action, loader } from "./participants";
 
 beforeEach(resetDb);
 
 const submit = (fields: Record<string, string | number>) =>
   action(routeArgs(postRequest(fields)));
+
+/** An update with restrictions; postRequest can't repeat a field name. */
+function submitUpdate(fields: Record<string, string | number>, cantGiveTo: (number | string)[]) {
+  const body = new URLSearchParams({ intent: "update" });
+  for (const [key, value] of Object.entries(fields)) body.set(key, String(value));
+  for (const id of cantGiveTo) body.append("cantGiveTo", String(id));
+  return action(routeArgs(new Request("http://localhost/", { method: "POST", body })));
+}
 
 describe("action", () => {
   it("adds someone", async () => {
@@ -50,6 +65,35 @@ describe("action", () => {
       init: { status: 400 },
     });
     expect(listParticipants()).toContainEqual(bob);
+  });
+
+  it("saves who someone can't give to along with their details", async () => {
+    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol");
+    expect(
+      await submitUpdate({ id: alice.id, name: "Alicia", email: alice.email }, [bob.id, carol.id]),
+    ).toEqual({ ok: true });
+    expect(listParticipants()).toContainEqual({ ...alice, name: "Alicia" });
+    expect(listRestrictions()).toEqual([
+      { giverId: alice.id, receiverId: bob.id },
+      { giverId: alice.id, receiverId: carol.id },
+    ]);
+  });
+
+  it("returns every problem at once and saves nothing", async () => {
+    const [alice, bob] = addPeople("Alice", "Bob");
+    deleteParticipant(bob.id);
+    expect(await submitUpdate({ id: alice.id, name: "", email: alice.email }, [bob.id])).toMatchObject({
+      data: {
+        ok: false,
+        errors: {
+          name: "Enter a name.",
+          cantGiveTo: "Someone you picked has been removed. Pick again.",
+        },
+      },
+      init: { status: 400 },
+    });
+    expect(listParticipants()).toEqual([alice]);
+    expect(listRestrictions()).toEqual([]);
   });
 
   it("removes someone", async () => {
@@ -138,6 +182,54 @@ describe("page", () => {
     expect(await screen.findByText("Alicia", { selector: "li p" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     expect(listParticipants().map((p) => p.name)).toEqual(["Alicia", "Bob"]);
+  });
+
+  it("shows who each person can't give to", async () => {
+    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol");
+    restrict(alice, carol, bob);
+    restrict(bob, alice);
+    renderPage();
+    await screen.findByRole("heading", { name: "3 people" });
+
+    expect(rowOf("Alice")).toHaveTextContent("Can't give to Bob or Carol");
+    expect(rowOf("Bob")).toHaveTextContent("Can't give to Alice");
+    expect(rowOf("Carol")).not.toHaveTextContent("Can't give to");
+  });
+
+  it("sets who someone can't give to", async () => {
+    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol");
+    restrict(alice, bob);
+    const user = renderPage();
+    await screen.findByRole("heading", { name: "3 people" });
+
+    await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
+    const first = screen.getByRole("combobox", { name: "Can't give to (1 of 2)" });
+    const second = screen.getByRole("combobox", { name: "Can't give to (2 of 2)" });
+    expect(first).toHaveValue(String(bob.id));
+    expect(second).toHaveValue("");
+    // Everyone but Alice herself.
+    expect(within(first).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "No one",
+      "Bob",
+      "Carol",
+    ]);
+
+    await user.selectOptions(first, "No one");
+    await user.selectOptions(second, "Carol");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(rowOf("Alice")).toHaveTextContent("Can't give to Carol"));
+    expect(listRestrictions()).toEqual([{ giverId: alice.id, receiverId: carol.id }]);
+  });
+
+  it("doesn't offer restrictions when there's nobody else", async () => {
+    addPeople("Alice");
+    const user = renderPage();
+    await screen.findByRole("heading", { name: "1 person" });
+
+    await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
   it("throws away edits on Cancel or Escape", async () => {

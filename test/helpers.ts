@@ -1,10 +1,16 @@
 import { expect } from "vitest";
 import { RouterContextProvider } from "react-router";
 import { run } from "~/lib/db.server";
-import { createParticipant, listParticipants } from "~/lib/participants.server";
+import {
+  createParticipant,
+  listParticipants,
+  updateParticipant,
+  type Participant,
+} from "~/lib/participants.server";
 
 /** Empties every table. */
 export function resetDb() {
+  run("DELETE FROM restrictions");
   run("DELETE FROM assignments");
   run("DELETE FROM draws");
   run("DELETE FROM participants");
@@ -16,6 +22,11 @@ export function addPeople(...names: string[]) {
     createParticipant({ name, email: `${name.toLowerCase()}@example.com` });
   }
   return listParticipants();
+}
+
+/** Sets who `giver` can't buy for, replacing any earlier restrictions. */
+export function restrict(giver: Participant, ...receivers: Participant[]) {
+  updateParticipant(giver.id, giver, receivers.map((r) => r.id));
 }
 
 export function formData(fields: Record<string, string | number>) {

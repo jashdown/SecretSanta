@@ -9,7 +9,9 @@ Nodemailer.
 
 ## What it does
 
-- **Participants:** add, edit and remove people (name + email).
+- **Participants:** add, edit and remove people (name + email). When editing
+  someone you can also pick up to two people they can't give to, for example
+  their partner.
 - **Assignments:** one button draws names, another emails each person their
   assignment. You can resend to one person, for example after fixing a typo in
   their email. Pairings stay hidden on screen until you click "Show pairings",
@@ -23,14 +25,20 @@ Everyone goes into one random loop (A → B → C → … → A), which means:
 
 - nobody gets themselves
 - no two people get each other
+- restrictions are always followed
 - pairings from the previous draw are avoided whenever possible
+
+Restrictions only go one way: "Alice can't give to Bob" still lets Bob give to
+Alice. For a couple, set it for both of them. If the restrictions leave no
+possible draw (say a couple in a group of three), the app says so and keeps
+the current assignments.
 
 You need at least 3 people. Until someone has actually been emailed you can
 redraw as often as you like, and each redraw replaces the last one. After
 emails go out the draw is kept in history, and the next draw starts a new one.
 
-If you add or remove people after drawing, the app asks you to redraw before
-it will email everyone.
+If you add or remove people, or add a restriction the current draw breaks, the
+app asks you to redraw before it will email everyone.
 
 ## Getting started
 

@@ -1,7 +1,12 @@
 import { drawPairs, pairKey } from "./assign.server";
 import { all, get, run, transaction } from "./db.server";
 import { sendAssignmentEmail } from "./email.server";
-import { listParticipants, type Participant } from "./participants.server";
+import {
+  listParticipants,
+  listRestrictions,
+  type Participant,
+  type Restriction,
+} from "./participants.server";
 
 export type EmailStatus = "pending" | "sent" | "logged" | "failed";
 
@@ -76,7 +81,8 @@ export function getLatestDraw(): Draw | null {
 /**
  * Makes new assignments for every current participant. If nobody has been
  * emailed about the latest draw yet, that draw is replaced instead of being
- * kept in history. Pairings from the previous draw are avoided when possible.
+ * kept in history. Restrictions are always followed, and pairings from the
+ * previous draw are avoided when possible. Throws DrawError if no draw fits.
  */
 export function createDraw(name: string) {
   return transaction(() => {
@@ -101,9 +107,11 @@ export function createDraw(name: string) {
         : [],
     );
 
+    const blocked = new Set(listRestrictions().map((r) => pairKey(r.giverId, r.receiverId)));
+
     const pairs = drawPairs(
       participants.map((p) => p.id),
-      avoid,
+      { blocked, avoid },
     );
     const byId = new Map(participants.map((p) => [p.id, p]));
     const drawId = Number(run("INSERT INTO draws (name) VALUES (?)", name).lastInsertRowid);
@@ -128,16 +136,26 @@ export function createDraw(name: string) {
   });
 }
 
-/** Whether the draw still matches the participant list, and what has changed. */
-export function checkDraw(draw: Draw, participants: Participant[]) {
+/** Whether the draw still matches the participants and their restrictions, and what has changed. */
+export function checkDraw(draw: Draw, participants: Participant[], restrictions: Restriction[]) {
   const inDraw = new Set(draw.assignments.map((a) => a.giverId));
   const added = participants.filter((p) => !inDraw.has(p.id)).map((p) => p.name);
   const removed = draw.assignments.filter((a) => a.giverId === null).map((a) => a.giverName);
+  const blocked = new Set(restrictions.map((r) => pairKey(r.giverId, r.receiverId)));
+  // Only a count: naming anyone would hint at who they drew.
+  const restricted = draw.assignments.filter(
+    (a) =>
+      a.giverId !== null &&
+      a.receiverId !== null &&
+      blocked.has(pairKey(a.giverId, a.receiverId)),
+  ).length;
   const sent = draw.assignments.filter((a) => a.emailStatus === "sent").length;
   return {
     added,
     removed,
-    upToDate: added.length === 0 && removed.length === 0,
+    /** Assignments that break a restriction set after the draw. */
+    restricted,
+    upToDate: added.length === 0 && removed.length === 0 && restricted === 0,
     sent,
     unsent: draw.assignments.length - sent,
     /** Kept in history once anyone has really been emailed. */

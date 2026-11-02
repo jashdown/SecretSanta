@@ -40,6 +40,16 @@ const migrations = [
 
   CREATE INDEX assignments_draw_id ON assignments(draw_id);
   `,
+  `
+  -- Each row means the giver must never be given the receiver to buy for.
+  -- The app allows up to two per giver.
+  CREATE TABLE restrictions (
+    giver_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    receiver_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    PRIMARY KEY (giver_id, receiver_id),
+    CHECK (giver_id <> receiver_id)
+  );
+  `,
 ];
 
 function open() {
