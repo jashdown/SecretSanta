@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { env } from "./env.server";
 
 const NOW = `(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`;
@@ -55,7 +55,9 @@ function open() {
   const path = resolve(env.databasePath);
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+  // Wait up to 5s for another process (the seed script, a backup) to finish
+  // writing, rather than failing straight away.
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
 
   const { user_version } = db.prepare("PRAGMA user_version").get() as {
     user_version: number;
@@ -78,16 +80,27 @@ function open() {
 const cache = globalThis as { __secretSantaDb?: DatabaseSync };
 const db = (cache.__secretSantaDb ??= open());
 
+// Each distinct SQL string is compiled once and reused.
+const statements = new Map<string, StatementSync>();
+function prepare(sql: string) {
+  let statement = statements.get(sql);
+  if (!statement) {
+    statement = db.prepare(sql);
+    statements.set(sql, statement);
+  }
+  return statement;
+}
+
 export function all<T>(sql: string, ...params: SQLInputValue[]): T[] {
-  return db.prepare(sql).all(...params) as T[];
+  return prepare(sql).all(...params) as T[];
 }
 
 export function get<T>(sql: string, ...params: SQLInputValue[]): T | undefined {
-  return db.prepare(sql).get(...params) as T | undefined;
+  return prepare(sql).get(...params) as T | undefined;
 }
 
 export function run(sql: string, ...params: SQLInputValue[]) {
-  return db.prepare(sql).run(...params);
+  return prepare(sql).run(...params);
 }
 
 export function transaction<T>(fn: () => T): T {

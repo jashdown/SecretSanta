@@ -8,6 +8,7 @@ import { deleteParticipant, listParticipants } from "~/lib/participants.server";
 import {
   addPeople,
   HydrateFallback,
+  moveToLastYear,
   postRequest,
   resetDb,
   restrict,
@@ -413,10 +414,37 @@ describe("page", () => {
 
     await user.click(within(rowOf("Bob")).getByRole("button", { name: "Send" }));
 
-    expect(await within(rowOf("Bob")).findByText("Sent")).toBeInTheDocument();
+    expect(await screen.findByText("Emailed Bob.")).toBeInTheDocument();
+    expect(within(rowOf("Bob")).getByText("Sent")).toBeInTheDocument();
     expect(within(rowOf("Bob")).getByRole("button", { name: "Resend" })).toBeInTheDocument();
     expect(within(rowOf("Alice")).getByText("Not sent")).toBeInTheDocument();
     expect(sendAssignmentEmail).toHaveBeenCalledOnce();
+  });
+
+  it("says why a send to one person was refused", async () => {
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("2026");
+    const user = renderPage();
+    await screen.findByRole("button", { name: "Email all 3" });
+
+    createDraw("2026"); // a redraw in another tab
+    await user.click(within(rowOf("Bob")).getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The assignments changed since this page loaded. Check them and try again.",
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+
+  it("starts a new draw instead of replacing last year's, even if it wasn't emailed", async () => {
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("Family 2025");
+    moveToLastYear(latest().id);
+    renderPage();
+
+    expect(await screen.findByLabelText("Name")).toHaveValue(thisYear());
+    expect(screen.getByRole("button", { name: "Make assignments for 3" })).toBeInTheDocument();
+    expect(screen.getByText(/The current one stays in History/)).toBeInTheDocument();
   });
 
   it("blocks emailing everyone after the participant list changes", async () => {

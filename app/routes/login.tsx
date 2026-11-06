@@ -26,9 +26,15 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 export async function action({ request }: Route.ActionArgs) {
   const form = await request.formData();
-  if (!checkPassword(String(form.get("password") ?? ""))) {
-    return data({ error: "That password isn't right." }, { status: 401 });
+  const { ok, retryInMinutes } = checkPassword(String(form.get("password") ?? ""));
+  if (retryInMinutes) {
+    const minutes = `${retryInMinutes} minute${retryInMinutes === 1 ? "" : "s"}`;
+    return data(
+      { error: `Too many wrong passwords. Try again in ${minutes}.` },
+      { status: 429 },
+    );
   }
+  if (!ok) return data({ error: "That password isn't right." }, { status: 401 });
   return logIn(request);
 }
 

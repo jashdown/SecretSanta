@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cookieFrom, expectRedirect } from "../../test/helpers";
 import { checkPassword, isAdmin, logIn, logOut, requireAdmin } from "./session.server";
 
@@ -9,17 +9,52 @@ async function signIn() {
   return cookieFrom(await logIn(request()));
 }
 
+/** A fresh copy of session.server, so the wrong-password count starts at zero. */
+async function freshSession() {
+  vi.resetModules();
+  return import("./session.server");
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("checkPassword", () => {
   it("accepts the admin password", () => {
-    expect(checkPassword("test-password")).toBe(true);
+    expect(checkPassword("test-password")).toEqual({ ok: true });
   });
 
   it.each(["", "wrong", "test-passwor", "test-password ", "TEST-PASSWORD"])(
     "rejects %j",
     (attempt) => {
-      expect(checkPassword(attempt)).toBe(false);
+      expect(checkPassword(attempt)).toEqual({ ok: false });
     },
   );
+
+  it("pauses sign-in for everyone after 10 wrong passwords in 15 minutes", async () => {
+    const session = await freshSession();
+    vi.setSystemTime(new Date("2026-12-01T12:00:00Z"));
+    for (let i = 0; i < 10; i++) expect(session.checkPassword("guess")).toEqual({ ok: false });
+
+    // Even the right password is refused, or guessing could carry on.
+    expect(session.checkPassword("test-password")).toEqual({ ok: false, retryInMinutes: 15 });
+
+    vi.setSystemTime(new Date("2026-12-01T12:14:01Z"));
+    expect(session.checkPassword("test-password")).toEqual({ ok: false, retryInMinutes: 1 });
+
+    vi.setSystemTime(new Date("2026-12-01T12:15:00Z"));
+    expect(session.checkPassword("test-password")).toEqual({ ok: true });
+  });
+
+  it("only counts wrong passwords from the last 15 minutes", async () => {
+    const session = await freshSession();
+    vi.setSystemTime(new Date("2026-12-01T12:00:00Z"));
+    for (let i = 0; i < 9; i++) session.checkPassword("guess");
+
+    vi.setSystemTime(new Date("2026-12-01T12:20:00Z"));
+    session.checkPassword("typo");
+    expect(session.checkPassword("test-password")).toEqual({ ok: true });
+  });
 });
 
 describe("logIn", () => {
@@ -53,6 +88,21 @@ describe("isAdmin", () => {
   it("is false for a session someone made up", async () => {
     const forged = `__secret_santa=${btoa(JSON.stringify({ isAdmin: true }))}`;
     expect(await isAdmin(request(forged))).toBe(false);
+  });
+
+  it("is false once ADMIN_PASSWORD has changed, signing everyone out", async () => {
+    const cookie = await signIn();
+    vi.stubEnv("ADMIN_PASSWORD", "a-new-password");
+    const session = await freshSession();
+
+    expect(await session.isAdmin(request(cookie))).toBe(false);
+    expect(await session.isAdmin(request(cookieFrom(await session.logIn(request()))))).toBe(true);
+  });
+
+  it("doesn't put the password in the cookie", async () => {
+    const value = decodeURIComponent((await signIn()).split("=")[1]);
+    const session = atob(value.split(".")[0]);
+    expect(session).not.toContain("test-password");
   });
 });
 

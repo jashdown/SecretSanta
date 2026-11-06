@@ -17,21 +17,42 @@ function required(name: string, devFallback: string): string {
   return devFallback;
 }
 
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1"];
+
 function smtpConfig() {
   const host = process.env.SMTP_HOST;
   if (!host) return null;
   const port = Number(process.env.SMTP_PORT || 587);
+  // Port 465 uses TLS from the start; other ports upgrade with STARTTLS.
+  const secure = process.env.SMTP_SECURE
+    ? process.env.SMTP_SECURE === "true"
+    : port === 465;
   return {
     host,
     port,
-    // Port 465 uses TLS from the start; other ports upgrade with STARTTLS.
-    secure: process.env.SMTP_SECURE
-      ? process.env.SMTP_SECURE === "true"
-      : port === 465,
+    secure,
+    // Refuse to send the password unencrypted if the upgrade is missing, e.g.
+    // stripped by someone in the middle. A relay on this machine is exempt.
+    requireTls: !secure && !LOOPBACK_HOSTS.includes(host),
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   };
 }
+
+/** Who emails come from. Real email needs a real sender, so it's required with SMTP. */
+function mailFrom(smtp: ReturnType<typeof smtpConfig>) {
+  const from = process.env.MAIL_FROM;
+  if (from) return from;
+  if (smtp) {
+    throw new Error(
+      "Missing environment variable MAIL_FROM, needed to send email through SMTP_HOST. See .env.example.",
+    );
+  }
+  // Only ever printed in console previews.
+  return "Patton Secret Santa <santa@localhost>";
+}
+
+const smtp = smtpConfig();
 
 export const env = {
   isProduction,
@@ -42,6 +63,6 @@ export const env = {
     ? process.env.COOKIE_SECURE === "true"
     : isProduction,
   databasePath: process.env.DATABASE_PATH || "data/secret-santa.db",
-  smtp: smtpConfig(),
-  mailFrom: process.env.MAIL_FROM || "Patton Secret Santa <santa@localhost>",
+  smtp,
+  mailFrom: mailFrom(smtp),
 };

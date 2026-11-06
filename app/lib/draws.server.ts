@@ -89,6 +89,15 @@ function attachAssignments(draws: DrawRow[]): Draw[] {
   }));
 }
 
+/**
+ * Whether a draw stays in history instead of being replaced by the next one:
+ * once anyone has really been emailed, or once it's from an earlier year,
+ * since it may have been handed out some other way (e.g. console previews).
+ */
+function isKept(createdAt: string, sent: number) {
+  return sent > 0 || new Date(createdAt).getFullYear() < new Date().getFullYear();
+}
+
 /** All draws, newest first. */
 export function listDraws(): Draw[] {
   return attachAssignments(all<DrawRow>(`${DRAWS_SELECT} ORDER BY id DESC`));
@@ -100,9 +109,9 @@ export function getLatestDraw(): Draw | null {
 
 /**
  * Makes new assignments for every current participant. If nobody has been
- * emailed about the latest draw yet, that draw is replaced instead of being
- * kept in history. Restrictions are always followed, and pairings from the
- * previous draw are avoided when possible. Throws DrawError if no draw fits,
+ * emailed about the latest draw yet and it's from this year, that draw is
+ * replaced instead of being kept in history. Restrictions are always
+ * followed, and pairings from the previous draw are avoided when possible. Throws DrawError if no draw fits,
  * or while emails are going out.
  */
 export function createDraw(name: string) {
@@ -113,12 +122,12 @@ export function createDraw(name: string) {
   return transaction(() => {
     const participants = listParticipants();
 
-    const latest = get<{ id: number; sent: number }>(
-      `SELECT d.id,
+    const latest = get<{ id: number; createdAt: string; sent: number }>(
+      `SELECT d.id, d.created_at AS createdAt,
          (SELECT COUNT(*) FROM assignments WHERE draw_id = d.id AND email_status = 'sent') AS sent
        FROM draws d ORDER BY d.id DESC LIMIT 1`,
     );
-    const replaced = latest !== undefined && latest.sent === 0;
+    const replaced = latest !== undefined && !isKept(latest.createdAt, latest.sent);
     if (replaced) run("DELETE FROM draws WHERE id = ?", latest.id);
 
     const previous = get<{ id: number }>("SELECT id FROM draws ORDER BY id DESC LIMIT 1");
@@ -183,8 +192,8 @@ export function checkDraw(draw: Draw, participants: Participant[], restrictions:
     upToDate: added.length === 0 && removed.length === 0 && restricted === 0,
     sent,
     unsent: draw.assignments.length - sent,
-    /** Kept in history once anyone has really been emailed. */
-    locked: sent > 0,
+    /** Kept in history, so the next draw starts a new one instead of replacing it. */
+    locked: isKept(draw.createdAt, sent),
   };
 }
 
@@ -247,29 +256,27 @@ export function resendAssignmentEmail(drawId: number, assignmentId: number) {
 
 async function deliver(drawName: string, a: Assignment): Promise<"sent" | "logged" | "failed"> {
   const attemptedAt = new Date().toISOString();
+  let status: "sent" | "logged" | "failed";
+  let errorMessage: string | null = null;
   try {
-    const status = await sendAssignmentEmail({
+    status = await sendAssignmentEmail({
       to: a.giverEmail,
       giverName: a.giverName,
       receiverName: a.receiverName,
       drawName,
     });
-    run(
-      "UPDATE assignments SET email_status = ?, email_error = NULL, emailed_at = ? WHERE id = ?",
-      status,
-      attemptedAt,
-      a.id,
-    );
-    return status;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`Failed to email ${a.giverEmail}: ${message}`);
-    run(
-      "UPDATE assignments SET email_status = 'failed', email_error = ?, emailed_at = ? WHERE id = ?",
-      message,
-      attemptedAt,
-      a.id,
-    );
-    return "failed";
+    errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to email ${a.giverEmail}: ${errorMessage}`);
+    status = "failed";
   }
+  // Outside the try, so a database error can't mark an email that went out as failed.
+  run(
+    "UPDATE assignments SET email_status = ?, email_error = ?, emailed_at = ? WHERE id = ?",
+    status,
+    errorMessage,
+    attemptedAt,
+    a.id,
+  );
+  return status;
 }

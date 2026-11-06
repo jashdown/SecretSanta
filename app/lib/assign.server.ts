@@ -39,7 +39,7 @@ export function drawPairs(
   { blocked = new Set(), avoid = new Set(), attempts = 2000, random = randomInt }: DrawOptions = {},
 ): Pair[] {
   if (ids.length < MIN_PARTICIPANTS) {
-    throw new DrawError(`Need at least ${MIN_PARTICIPANTS} participants.`);
+    throw new DrawError(`Add at least ${MIN_PARTICIPANTS} participants first.`);
   }
 
   let best: Pair[] | null = null;

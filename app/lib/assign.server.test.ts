@@ -23,7 +23,7 @@ const keysOf = (pairs: Pair[]) => new Set(pairs.map((p) => pairKey(p.giverId, p.
 
 describe("drawPairs", () => {
   it.each([0, 1, 2])("refuses to draw for %i people", (count) => {
-    expect(() => drawPairs(ids(count))).toThrow(`Need at least ${MIN_PARTICIPANTS} participants.`);
+    expect(() => drawPairs(ids(count))).toThrow(`Add at least ${MIN_PARTICIPANTS} participants first.`);
   });
 
   it.each([3, 4, 5, 10, 50])("puts all %i people in one loop", (count) => {

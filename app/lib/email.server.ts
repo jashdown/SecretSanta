@@ -11,7 +11,12 @@ function getTransporter() {
     host: env.smtp.host,
     port: env.smtp.port,
     secure: env.smtp.secure,
+    requireTLS: env.smtp.requireTls,
     auth: env.smtp.user ? { user: env.smtp.user, pass: env.smtp.pass } : undefined,
+    // Keep one connection open and reuse it, rather than connecting and
+    // signing in again for every email.
+    pool: true,
+    maxConnections: 1,
   });
   return transporter;
 }

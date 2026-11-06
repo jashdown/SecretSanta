@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addPeople, resetDb, restrict } from "../../test/helpers";
+import { addPeople, moveToLastYear, resetDb, restrict } from "../../test/helpers";
 import {
   checkDraw,
   createDraw,
@@ -76,7 +76,7 @@ describe("createDraw", () => {
     createDraw("First");
     deleteParticipant(alice.id);
 
-    expect(() => createDraw("Second")).toThrow("Need at least 3 participants.");
+    expect(() => createDraw("Second")).toThrow("Add at least 3 participants first.");
     expect(listDraws().map((d) => d.name)).toEqual(["First"]);
   });
 
@@ -115,6 +115,16 @@ describe("createDraw", () => {
     createDraw("First try");
     expect(createDraw("Second try").replaced).toBe(true);
     expect(listDraws().map((d) => d.name)).toEqual(["Second try"]);
+  });
+
+  it("keeps last year's draw even if nobody was emailed about it", () => {
+    // e.g. it was handed out from the console previews.
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("2025");
+    moveToLastYear(latest().id);
+
+    expect(createDraw("2026").replaced).toBe(false);
+    expect(listDraws().map((d) => d.name)).toEqual(["2026", "2025"]);
   });
 
   it("still replaces the draw after preview-only sends", async () => {
@@ -290,6 +300,13 @@ describe("checkDraw", () => {
 
     createDraw("2026");
     expect(check()).toMatchObject({ restricted: 0, upToDate: true });
+  });
+
+  it("locks a draw from an earlier year, even if nobody was emailed", () => {
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("2025");
+    moveToLastYear(latest().id);
+    expect(check()).toMatchObject({ sent: 0, locked: true });
   });
 
   it("only counts real sends, and locks the draw after the first one", async () => {

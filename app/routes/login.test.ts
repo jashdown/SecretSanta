@@ -57,6 +57,18 @@ describe("action", () => {
     });
   });
 
+  it("pauses sign-in after too many wrong passwords", async () => {
+    vi.resetModules();
+    const login = await import("./login");
+    for (let i = 0; i < 10; i++) await login.action(routeArgs(postRequest({ password: "guess" })));
+
+    const result = await login.action(routeArgs(postRequest({ password: "test-password" })));
+    expect(result).toMatchObject({
+      data: { error: "Too many wrong passwords. Try again in 15 minutes." },
+      init: { status: 429 },
+    });
+  });
+
   it("signs you in with the right password", async () => {
     const response = await action(routeArgs(postRequest({ password: "test-password" })));
     expectRedirect(response, "/admin");

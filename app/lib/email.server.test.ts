@@ -61,7 +61,10 @@ describe("with SMTP", () => {
       host: "smtp.example.com",
       port: 465,
       secure: true,
+      requireTLS: false,
       auth: { user: "santa", pass: "pw" },
+      pool: true,
+      maxConnections: 1,
     });
     expect(nodemailer.sendMail).toHaveBeenCalledWith({
       from: "Santa <santa@example.com>",
@@ -70,6 +73,14 @@ describe("with SMTP", () => {
       text: expect.stringContaining("You're the Secret Santa for: Bob"),
       html: expect.stringContaining("Bob"),
     });
+  });
+
+  it("insists on STARTTLS when the connection doesn't start encrypted", async () => {
+    const { sendAssignmentEmail } = await loadEmail({ ...smtp, SMTP_PORT: "587" });
+    await sendAssignmentEmail(email);
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 587, secure: false, requireTLS: true }),
+    );
   });
 
   it("skips auth when there's no SMTP_USER", async () => {

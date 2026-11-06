@@ -78,31 +78,49 @@ describe("in production", () => {
 });
 
 describe("SMTP settings", () => {
+  const smtp = { SMTP_HOST: "smtp.example.com", MAIL_FROM: "Santa <santa@example.com>" };
+
   it("are off without SMTP_HOST", async () => {
     expect((await loadEnv({ SMTP_USER: "santa", SMTP_PASS: "pw" })).smtp).toBeNull();
   });
 
-  it("default to port 587 with STARTTLS", async () => {
-    const env = await loadEnv({ SMTP_HOST: "smtp.example.com", SMTP_USER: "santa", SMTP_PASS: "pw" });
+  it("default to port 587, which must upgrade with STARTTLS", async () => {
+    const env = await loadEnv({ ...smtp, SMTP_USER: "santa", SMTP_PASS: "pw" });
     expect(env.smtp).toEqual({
       host: "smtp.example.com",
       port: 587,
       secure: false,
+      requireTls: true,
       user: "santa",
       pass: "pw",
     });
   });
 
   it("use TLS from the start on port 465", async () => {
-    const env = await loadEnv({ SMTP_HOST: "smtp.example.com", SMTP_PORT: "465" });
-    expect(env.smtp).toMatchObject({ port: 465, secure: true });
+    const env = await loadEnv({ ...smtp, SMTP_PORT: "465" });
+    expect(env.smtp).toMatchObject({ port: 465, secure: true, requireTls: false });
   });
 
   it.each([
     { port: "587", secure: "true", expected: true },
     { port: "465", secure: "false", expected: false },
   ])("let SMTP_SECURE=$secure override port $port", async ({ port, secure, expected }) => {
-    const env = await loadEnv({ SMTP_HOST: "smtp.example.com", SMTP_PORT: port, SMTP_SECURE: secure });
+    const env = await loadEnv({ ...smtp, SMTP_PORT: port, SMTP_SECURE: secure });
     expect(env.smtp?.secure).toBe(expected);
+    expect(env.smtp?.requireTls).toBe(!expected);
+  });
+
+  it.each(["localhost", "127.0.0.1", "::1"])(
+    "don't insist on STARTTLS for a relay on this machine (%s)",
+    async (host) => {
+      const env = await loadEnv({ ...smtp, SMTP_HOST: host, SMTP_PORT: "25" });
+      expect(env.smtp).toMatchObject({ secure: false, requireTls: false });
+    },
+  );
+
+  it("need MAIL_FROM, even in development", async () => {
+    await expect(loadEnv({ SMTP_HOST: "smtp.example.com" })).rejects.toThrow(
+      "Missing environment variable MAIL_FROM",
+    );
   });
 });

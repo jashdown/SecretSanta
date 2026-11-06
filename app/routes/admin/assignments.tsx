@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { data, Form, Link, useFetcher, useNavigation } from "react-router";
+import { data, Form, Link, useNavigation } from "react-router";
 import type { Route } from "./+types/assignments";
 import { EmailStatusBadge, LocalTime, Notice, PageHeader } from "~/components/ui";
 import { DrawError, MIN_PARTICIPANTS } from "~/lib/assign.server";
@@ -46,9 +46,6 @@ export async function action({ request }: Route.ActionArgs): Promise<Result> {
   const intent = form.get("intent");
 
   if (intent === "draw") {
-    if (listParticipants().length < MIN_PARTICIPANTS) {
-      return fail(`Add at least ${MIN_PARTICIPANTS} participants first.`);
-    }
     const name = String(form.get("name") ?? "").trim() || defaultDrawName();
     if (name.length > 100) return fail("Keep the name under 100 characters.");
 
@@ -109,8 +106,8 @@ export default function Assignments({ loaderData, actionData }: Route.ComponentP
   const { draw, status, participantCount, restrictionCount, minParticipants, defaultName } =
     loaderData;
   const navigation = useNavigation();
-  const pendingIntent =
-    navigation.state === "submitting" ? navigation.formData?.get("intent") : undefined;
+  const submitting = navigation.state === "submitting";
+  const pendingIntent = submitting ? navigation.formData?.get("intent") : undefined;
 
   const enoughPeople = participantCount >= minParticipants;
   const willReplace = draw !== null && status !== null && !status.locked;
@@ -160,10 +157,7 @@ export default function Assignments({ loaderData, actionData }: Route.ComponentP
                 maxLength={100}
               />
               {/* The server refuses to draw while emails go out, too. */}
-              <button
-                className="btn btn-primary"
-                disabled={pendingIntent === "draw" || pendingIntent === "send"}
-              >
+              <button className="btn btn-primary" disabled={submitting}>
                 {pendingIntent === "draw"
                   ? "Drawing…"
                   : willReplace
@@ -206,7 +200,10 @@ function CurrentDraw({
 }) {
   const [revealed, setRevealed] = useState(false);
   const navigation = useNavigation();
-  const sending = navigation.state === "submitting" && navigation.formData?.get("intent") === "send";
+  const submitting = navigation.state === "submitting";
+  const pending = submitting ? navigation.formData : undefined;
+  const sendingAll = pending?.get("intent") === "send";
+  const sendingTo = pending?.get("intent") === "resend" ? Number(pending.get("assignmentId")) : null;
 
   const total = draw.assignments.length;
   const participantsChanged = status.added.length > 0 || status.removed.length > 0;
@@ -243,8 +240,8 @@ function CurrentDraw({
             <input type="hidden" name="intent" value="send" />
             <input type="hidden" name="drawId" value={draw.id} />
             <input type="hidden" name="mode" value={mode} />
-            <button className="btn btn-green" disabled={sending || !status.upToDate}>
-              {sending ? "Sending…" : sendLabel}
+            <button className="btn btn-green" disabled={submitting || !status.upToDate}>
+              {sendingAll ? "Sending…" : sendLabel}
             </button>
           </Form>
         </div>
@@ -280,7 +277,8 @@ function CurrentDraw({
             assignment={assignment}
             drawId={draw.id}
             revealed={revealed}
-            canSend={status.upToDate && !sending}
+            canSend={status.upToDate && !submitting}
+            sending={sendingTo === assignment.id}
           />
         ))}
       </ul>
@@ -298,16 +296,16 @@ function AssignmentRow({
   drawId,
   revealed,
   canSend,
+  sending,
 }: {
   assignment: Assignment;
   drawId: number;
   revealed: boolean;
-  /** False while everyone is being emailed, or once the draw is out of date. */
+  /** False while anything else is being sent or drawn, or once the draw is out of date. */
   canSend: boolean;
+  /** This person's email is going out right now. */
+  sending: boolean;
 }) {
-  const fetcher = useFetcher<typeof action>();
-  const busy = fetcher.state !== "idle";
-
   return (
     <li className="grid gap-2 px-5 py-3 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center sm:gap-4">
       <div className="min-w-0">
@@ -340,14 +338,15 @@ function AssignmentRow({
           <p className="mt-1 text-xs break-words text-red-700 dark:text-red-400">{a.emailError}</p>
         )}
       </div>
-      <fetcher.Form method="post">
+      {/* A page form, not a fetcher, so the result shows in the notice at the top. */}
+      <Form method="post">
         <input type="hidden" name="intent" value="resend" />
         <input type="hidden" name="drawId" value={drawId} />
         <input type="hidden" name="assignmentId" value={a.id} />
-        <button className="btn btn-outline btn-sm" disabled={busy || !canSend}>
-          {busy ? "Sending…" : a.emailStatus === "pending" ? "Send" : "Resend"}
+        <button className="btn btn-outline btn-sm" disabled={!canSend}>
+          {sending ? "Sending…" : a.emailStatus === "pending" ? "Send" : "Resend"}
         </button>
-      </fetcher.Form>
+      </Form>
     </li>
   );
 }

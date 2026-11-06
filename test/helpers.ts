@@ -16,6 +16,12 @@ export function resetDb() {
   run("DELETE FROM participants");
 }
 
+/** Dates a draw to last year, as if it had been made then. */
+export function moveToLastYear(drawId: number) {
+  const lastYear = new Date().getFullYear() - 1;
+  run("UPDATE draws SET created_at = ? WHERE id = ?", `${lastYear}-12-01T12:00:00.000Z`, drawId);
+}
+
 /** Adds people with emails like alice@example.com and returns everyone. */
 export function addPeople(...names: string[]) {
   for (const name of names) {

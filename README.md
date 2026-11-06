@@ -36,6 +36,9 @@ the current assignments.
 You need at least 3 people. Until someone has actually been emailed you can
 redraw as often as you like, and each redraw replaces the last one. After
 emails go out the draw is kept in history, and the next draw starts a new one.
+A draw from an earlier year is kept too, even if nobody was emailed about it,
+so this year's draw never replaces last year's. You can't draw while emails
+are going out.
 
 If you add or remove people, or add a restriction the current draw breaks, the
 app asks you to redraw before it will email anyone.
@@ -79,11 +82,15 @@ All settings are environment variables. In development you can put them in
 | `SMTP_PORT`      | no                     | Default `587`.                                                           |
 | `SMTP_USER`      | usually                | SMTP username.                                                           |
 | `SMTP_PASS`      | usually                | SMTP password.                                                           |
-| `SMTP_SECURE`    | no                     | Defaults to `true` for port 465; other ports use STARTTLS.               |
-| `MAIL_FROM`      | no                     | Sender, e.g. `"Patton Secret Santa <santa@example.com>"`.                |
+| `SMTP_SECURE`    | no                     | Defaults to `true` for port 465; other ports must upgrade with STARTTLS. |
+| `MAIL_FROM`      | with `SMTP_HOST`       | Sender, e.g. `"Patton Secret Santa <santa@example.com>"`.                |
 
 The server won't start in production without `ADMIN_PASSWORD` and
-`SESSION_SECRET`.
+`SESSION_SECRET`, or anywhere with `SMTP_HOST` but no `MAIL_FROM`.
+
+Changing `ADMIN_PASSWORD` signs everyone out. After 10 wrong passwords in 15
+minutes, sign-in is paused for everyone until the 15 minutes are up. Anyone
+already signed in stays signed in.
 
 ### Email with Gmail
 
@@ -124,8 +131,21 @@ docker run -p 3000:3000 \
   patton-secret-santa
 ```
 
-The volume keeps the database between container restarts. To back it up, copy
-`secret-santa.db` from the volume (or from `data/` when running without Docker).
+The volume keeps the database between container restarts.
+
+### Backups
+
+The database is `secret-santa.db`, in the volume (or in `data/` when running
+without Docker). Recent changes are written to `secret-santa.db-wal` next to it
+first, so copying `secret-santa.db` alone can miss them. Either:
+
+- stop the app, then copy `secret-santa.db` together with any
+  `secret-santa.db-wal` and `secret-santa.db-shm` files beside it, or
+- while it's running, use SQLite's backup command, which includes everything:
+
+  ```bash
+  sqlite3 data/secret-santa.db ".backup secret-santa-backup.db"
+  ```
 
 ## Project layout
 
