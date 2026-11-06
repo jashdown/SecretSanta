@@ -6,6 +6,7 @@ import {
   getLatestDraw,
   listDraws,
   resendAssignmentEmail,
+  SendError,
   sendDrawEmails,
   type Draw,
 } from "./draws.server";
@@ -34,10 +35,21 @@ const find = (draw: Draw, giverName: string) =>
 
 const check = () => checkDraw(latest(), listParticipants(), listRestrictions());
 
+/** Makes every email wait until the returned function is called. */
+function holdEmails() {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  sendAssignmentEmail.mockImplementation(async () => {
+    await gate;
+    return "sent";
+  });
+  return release;
+}
+
 /** Draws names and emails everyone, so the draw is kept in history. */
 async function keptDraw(name: string) {
   createDraw(name);
-  await sendDrawEmails(latest(), "all");
+  await sendDrawEmails(latest().id, "all");
   return latest();
 }
 
@@ -109,7 +121,7 @@ describe("createDraw", () => {
     addPeople("Alice", "Bob", "Carol");
     createDraw("First try");
     sendAssignmentEmail.mockResolvedValue("logged");
-    await sendDrawEmails(latest(), "all");
+    await sendDrawEmails(latest().id, "all");
 
     expect(createDraw("Second try").replaced).toBe(true);
     expect(listDraws()).toHaveLength(1);
@@ -120,17 +132,35 @@ describe("createDraw", () => {
     addPeople("Alice", "Bob", "Carol");
     createDraw("First try");
     sendAssignmentEmail.mockRejectedValue(new Error("SMTP is down"));
-    await sendDrawEmails(latest(), "all");
+    await sendDrawEmails(latest().id, "all");
 
     expect(createDraw("Second try").replaced).toBe(true);
     expect(listDraws()).toHaveLength(1);
+  });
+
+  it("won't replace the draw while its emails are going out", async () => {
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("First try");
+    const release = holdEmails();
+    const sending = sendDrawEmails(latest().id, "all");
+
+    // Nobody has been emailed yet, so without the lock this would replace the
+    // draw while its emails kept going out.
+    expect(() => createDraw("Second try")).toThrow(
+      new DrawError("Emails are still going out. Wait for them to finish, then try again."),
+    );
+
+    release();
+    expect(await sending).toEqual({ sent: 3, logged: 0, failed: 0 });
+    expect(listDraws().map((d) => d.name)).toEqual(["First try"]);
+    expect(createDraw("Second try").replaced).toBe(false);
   });
 
   it("keeps the draw in history once anyone has been emailed", async () => {
     addPeople("Alice", "Bob", "Carol");
     createDraw("2025");
     const draw = latest();
-    await resendAssignmentEmail(draw, draw.assignments[0].id);
+    await resendAssignmentEmail(draw.id, draw.assignments[0].id);
 
     expect(createDraw("2026").replaced).toBe(false);
     expect(listDraws().map((d) => d.name)).toEqual(["2026", "2025"]);
@@ -150,7 +180,7 @@ describe("createDraw", () => {
     }
 
     // Once 2026 is emailed, the next draw avoids 2026 instead.
-    await sendDrawEmails(latest(), "all");
+    await sendDrawEmails(latest().id, "all");
     createDraw("2027");
     expect(pairsOf(latest())).toEqual(lastYear);
   });
@@ -267,7 +297,7 @@ describe("checkDraw", () => {
     createDraw("2026");
 
     sendAssignmentEmail.mockResolvedValue("logged");
-    await sendDrawEmails(latest(), "all");
+    await sendDrawEmails(latest().id, "all");
     expect(check()).toMatchObject({
       sent: 0,
       unsent: 3,
@@ -275,7 +305,7 @@ describe("checkDraw", () => {
     });
 
     sendAssignmentEmail.mockResolvedValue("sent");
-    await resendAssignmentEmail(latest(), latest().assignments[0].id);
+    await resendAssignmentEmail(latest().id, latest().assignments[0].id);
     expect(check()).toMatchObject({
       sent: 1,
       unsent: 2,
@@ -292,7 +322,7 @@ describe("sendDrawEmails", () => {
 
   it("emails each giver who they're buying for", async () => {
     const draw = latest();
-    expect(await sendDrawEmails(draw, "unsent")).toEqual({ sent: 3, logged: 0, failed: 0 });
+    expect(await sendDrawEmails(draw.id, "unsent")).toEqual({ sent: 3, logged: 0, failed: 0 });
 
     expect(sendAssignmentEmail).toHaveBeenCalledTimes(3);
     for (const a of draw.assignments) {
@@ -314,7 +344,7 @@ describe("sendDrawEmails", () => {
 
   it("records preview-only sends when SMTP isn't set up", async () => {
     sendAssignmentEmail.mockResolvedValue("logged");
-    expect(await sendDrawEmails(latest(), "unsent")).toEqual({ sent: 0, logged: 3, failed: 0 });
+    expect(await sendDrawEmails(latest().id, "unsent")).toEqual({ sent: 0, logged: 3, failed: 0 });
     expect(latest().assignments.map((a) => a.emailStatus)).toEqual(["logged", "logged", "logged"]);
   });
 
@@ -325,7 +355,7 @@ describe("sendDrawEmails", () => {
       return "sent";
     });
 
-    expect(await sendDrawEmails(latest(), "unsent")).toEqual({ sent: 2, logged: 0, failed: 1 });
+    expect(await sendDrawEmails(latest().id, "unsent")).toEqual({ sent: 2, logged: 0, failed: 1 });
 
     const draw = latest();
     expect(find(draw, "Bob")).toMatchObject({
@@ -341,7 +371,7 @@ describe("sendDrawEmails", () => {
   it("saves errors that aren't Error objects", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     sendAssignmentEmail.mockRejectedValue("connection timed out");
-    await sendDrawEmails(latest(), "unsent");
+    await sendDrawEmails(latest().id, "unsent");
     expect(find(latest(), "Alice").emailError).toBe("connection timed out");
   });
 
@@ -351,11 +381,11 @@ describe("sendDrawEmails", () => {
       if (to === "bob@example.com") throw new Error("Mailbox full");
       return "sent";
     });
-    await sendDrawEmails(latest(), "unsent");
+    await sendDrawEmails(latest().id, "unsent");
 
     sendAssignmentEmail.mockClear();
     sendAssignmentEmail.mockResolvedValue("sent");
-    expect(await sendDrawEmails(latest(), "unsent")).toEqual({ sent: 1, logged: 0, failed: 0 });
+    expect(await sendDrawEmails(latest().id, "unsent")).toEqual({ sent: 1, logged: 0, failed: 0 });
     expect(sendAssignmentEmail).toHaveBeenCalledOnce();
     expect(sendAssignmentEmail).toHaveBeenCalledWith(
       expect.objectContaining({ to: "bob@example.com" }),
@@ -364,13 +394,39 @@ describe("sendDrawEmails", () => {
   });
 
   it("sends nothing once everyone has been emailed, unless asked to resend to all", async () => {
-    await sendDrawEmails(latest(), "unsent");
+    await sendDrawEmails(latest().id, "unsent");
     sendAssignmentEmail.mockClear();
 
-    expect(await sendDrawEmails(latest(), "unsent")).toEqual({ sent: 0, logged: 0, failed: 0 });
+    expect(await sendDrawEmails(latest().id, "unsent")).toEqual({ sent: 0, logged: 0, failed: 0 });
     expect(sendAssignmentEmail).not.toHaveBeenCalled();
 
-    expect(await sendDrawEmails(latest(), "all")).toEqual({ sent: 3, logged: 0, failed: 0 });
+    expect(await sendDrawEmails(latest().id, "all")).toEqual({ sent: 3, logged: 0, failed: 0 });
+  });
+
+  it("sends one batch at a time, so a second click doesn't email anyone twice", async () => {
+    const first = sendDrawEmails(latest().id, "unsent");
+    const second = sendDrawEmails(latest().id, "unsent");
+
+    expect(await first).toEqual({ sent: 3, logged: 0, failed: 0 });
+    expect(await second).toEqual({ sent: 0, logged: 0, failed: 0 });
+    expect(sendAssignmentEmail).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses a draw that has since been replaced", async () => {
+    const staleId = latest().id;
+    createDraw("Redrawn");
+    await expect(sendDrawEmails(staleId, "unsent")).rejects.toThrow(
+      new SendError("The assignments changed since this page loaded. Check them and try again."),
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+
+  it("refuses once the participant list has changed", async () => {
+    addPeople("Dave");
+    await expect(sendDrawEmails(latest().id, "unsent")).rejects.toThrow(
+      new SendError("The participant list changed since this draw. Make new assignments first."),
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
   });
 });
 
@@ -384,7 +440,10 @@ describe("resendAssignmentEmail", () => {
     const draw = latest();
     const carol = find(draw, "Carol");
 
-    expect(await resendAssignmentEmail(draw, carol.id)).toBe("sent");
+    expect(await resendAssignmentEmail(draw.id, carol.id)).toEqual({
+      giverName: "Carol",
+      status: "sent",
+    });
 
     expect(sendAssignmentEmail).toHaveBeenCalledOnce();
     expect(sendAssignmentEmail).toHaveBeenCalledWith({
@@ -404,11 +463,35 @@ describe("resendAssignmentEmail", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     sendAssignmentEmail.mockRejectedValue(new Error("Mailbox full"));
     const draw = latest();
-    expect(await resendAssignmentEmail(draw, draw.assignments[0].id)).toBe("failed");
+    expect(await resendAssignmentEmail(draw.id, draw.assignments[0].id)).toMatchObject({
+      status: "failed",
+    });
   });
 
-  it("returns null for someone who isn't in the draw", async () => {
-    expect(await resendAssignmentEmail(latest(), 999_999)).toBeNull();
+  it("refuses someone who isn't in the draw", async () => {
+    await expect(resendAssignmentEmail(latest().id, 999_999)).rejects.toThrow(
+      new SendError("That person is no longer taking part. Make new assignments first."),
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+
+  it("refuses an assignment that breaks a restriction set since the draw", async () => {
+    const people = listParticipants();
+    const alice = find(latest(), "Alice");
+    const byId = (id: number | null) => people.find((p) => p.id === id)!;
+    restrict(byId(alice.giverId), byId(alice.receiverId));
+
+    await expect(resendAssignmentEmail(latest().id, alice.id)).rejects.toThrow(
+      new SendError("The restrictions changed since this draw. Make new assignments first."),
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+
+  it("refuses anyone once someone has been added since the draw", async () => {
+    addPeople("Dave");
+    await expect(resendAssignmentEmail(latest().id, find(latest(), "Alice").id)).rejects.toThrow(
+      new SendError("The participant list changed since this draw. Make new assignments first."),
+    );
     expect(sendAssignmentEmail).not.toHaveBeenCalled();
   });
 });

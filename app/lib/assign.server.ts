@@ -55,9 +55,16 @@ export function drawPairs(
     }
   }
 
-  // Restrictions can make allowed loops too rare for random tries to hit.
-  for (let i = 0; i < SEARCH_RESTARTS && !best; i++) {
-    const loop = searchLoop(ids, blocked, avoid, random);
+  // Restrictions can make allowed loops too rare for random tries to hit, and
+  // last time's pairings can do the same to loops that repeat none of them.
+  // So search step by step: first for a loop with no repeats at all...
+  if (bestRepeats > 0 && avoid.size > 0) {
+    const fresh = searchLoops(ids, new Set([...blocked, ...avoid]), new Set(), random);
+    if (fresh) best = toPairs(fresh);
+  }
+  // ...then for any allowed loop, with as few repeats as it can find.
+  if (!best) {
+    const loop = searchLoops(ids, blocked, avoid, random);
     if (loop) best = toPairs(loop);
   }
 
@@ -76,6 +83,30 @@ const isIn = (keys: ReadonlySet<string>) => (pair: Pair) =>
 
 const toPairs = (loop: number[]): Pair[] =>
   loop.map((giverId, index) => ({ giverId, receiverId: loop[(index + 1) % loop.length] }));
+
+/**
+ * Runs the step-by-step search from several fresh starts and returns the loop
+ * that repeats the fewest pairs from `avoid`, or null if it found none.
+ */
+function searchLoops(
+  ids: number[],
+  blocked: ReadonlySet<string>,
+  avoid: ReadonlySet<string>,
+  random: (max: number) => number,
+): number[] | null {
+  let best: number[] | null = null;
+  let bestRepeats = Infinity;
+  for (let i = 0; i < SEARCH_RESTARTS && bestRepeats > 0; i++) {
+    const loop = searchLoop(ids, blocked, avoid, random);
+    if (!loop) continue;
+    const repeats = toPairs(loop).filter(isIn(avoid)).length;
+    if (repeats < bestRepeats) {
+      best = loop;
+      bestRepeats = repeats;
+    }
+  }
+  return best;
+}
 
 /**
  * Builds a loop one person at a time, backing up when it gets stuck, and

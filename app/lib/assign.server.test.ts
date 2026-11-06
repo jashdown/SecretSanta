@@ -194,19 +194,36 @@ describe("drawPairs with restrictions", () => {
     ]);
   });
 
-  it("finds a loop that random tries would almost always miss", () => {
-    // Only people 1 and 2 may give to 39 and 40, who can't give to each other.
-    // About 1 random loop in 740 fits.
+  /** Only people 1 and 2 may give to 39 and 40, who can't give to each other. */
+  function rareLoops() {
     const people = ids(40);
     const blocked = new Set([pairKey(39, 40), pairKey(40, 39)]);
     for (const giver of people.slice(2, 38)) {
       blocked.add(pairKey(giver, 39));
       blocked.add(pairKey(giver, 40));
     }
+    return { people, blocked };
+  }
+
+  it("finds a loop that random tries would almost always miss", () => {
+    // About 1 random loop in 740 fits.
+    const { people, blocked } = rareLoops();
     for (let run = 0; run < 10; run++) {
       const pairs = drawPairs(people, { blocked, attempts: 0 });
       expect(loopLength(pairs)).toBe(40);
       expect(usesAny(pairs, blocked)).toBe(false);
+    }
+  });
+
+  it("avoids last time's pairings even when restrictions make loops rare", () => {
+    // Last time 1 and 2 gave to 39 and 40 one way round, so this time they
+    // have to swap. The rest have plenty of fresh pairings to choose from.
+    const { people, blocked } = rareLoops();
+    const lastYear = keysOf(drawPairs(people, { blocked }));
+    for (let run = 0; run < 20; run++) {
+      const pairs = drawPairs(people, { blocked, avoid: lastYear });
+      expect(usesAny(pairs, blocked)).toBe(false);
+      expect(repeatsOf(pairs, lastYear)).toBe(0);
     }
   });
 });

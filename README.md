@@ -38,7 +38,7 @@ redraw as often as you like, and each redraw replaces the last one. After
 emails go out the draw is kept in history, and the next draw starts a new one.
 
 If you add or remove people, or add a restriction the current draw breaks, the
-app asks you to redraw before it will email everyone.
+app asks you to redraw before it will email anyone.
 
 ## Getting started
 

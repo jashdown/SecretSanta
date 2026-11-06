@@ -1,4 +1,4 @@
-import { drawPairs, pairKey } from "./assign.server";
+import { DrawError, drawPairs, pairKey } from "./assign.server";
 import { all, get, run, transaction } from "./db.server";
 import { sendAssignmentEmail } from "./email.server";
 import {
@@ -33,6 +33,26 @@ export type Draw = {
 };
 
 type DrawRow = Omit<Draw, "assignments">;
+
+/** Emails can't go out. The message is meant for the organizer. */
+export class SendError extends Error {
+  name = "SendError";
+}
+
+// Emails go out one batch at a time, so two clicks can't email someone twice,
+// and while any are going out, createDraw won't replace the draw they belong
+// to. The app runs as one server process, so tracking this in memory is enough.
+let sendQueue: Promise<unknown> = Promise.resolve();
+let sendsWaiting = 0;
+
+function oneSendAtATime<T>(send: () => Promise<T>): Promise<T> {
+  sendsWaiting++;
+  const result = sendQueue.then(send).finally(() => {
+    sendsWaiting--;
+  });
+  sendQueue = result.catch(() => {});
+  return result;
+}
 
 // Show current names/emails, falling back to the copies saved at draw time
 // for people who have since been removed.
@@ -82,9 +102,14 @@ export function getLatestDraw(): Draw | null {
  * Makes new assignments for every current participant. If nobody has been
  * emailed about the latest draw yet, that draw is replaced instead of being
  * kept in history. Restrictions are always followed, and pairings from the
- * previous draw are avoided when possible. Throws DrawError if no draw fits.
+ * previous draw are avoided when possible. Throws DrawError if no draw fits,
+ * or while emails are going out.
  */
 export function createDraw(name: string) {
+  // Otherwise emails could keep going out for pairings that were just replaced.
+  if (sendsWaiting > 0) {
+    throw new DrawError("Emails are still going out. Wait for them to finish, then try again.");
+  }
   return transaction(() => {
     const participants = listParticipants();
 
@@ -163,21 +188,61 @@ export function checkDraw(draw: Draw, participants: Participant[], restrictions:
   };
 }
 
-/** Emails each giver in the draw. "unsent" skips anyone already emailed successfully. */
-export async function sendDrawEmails(draw: Draw, mode: "unsent" | "all") {
-  const targets = draw.assignments.filter((a) => mode === "all" || a.emailStatus !== "sent");
-  const results = { sent: 0, logged: 0, failed: 0 };
-  // One at a time keeps us well under SMTP providers' rate limits.
-  for (const assignment of targets) {
-    results[await deliver(draw.name, assignment)]++;
+/** The latest draw, as long as it's still the one the organizer's page showed. */
+function currentDraw(drawId: number): Draw {
+  const draw = getLatestDraw();
+  // A stale page (e.g. someone redrew in another tab) must not email the wrong assignments.
+  if (!draw || draw.id !== drawId) {
+    throw new SendError(
+      "The assignments changed since this page loaded. Check them and try again.",
+    );
   }
-  return results;
+  return draw;
 }
 
-export async function resendAssignmentEmail(draw: Draw, assignmentId: number) {
-  const assignment = draw.assignments.find((a) => a.id === assignmentId);
-  if (!assignment) return null;
-  return deliver(draw.name, assignment);
+/** Refuses a draw that no longer matches the participants or their restrictions. */
+function assertUpToDate(draw: Draw) {
+  const status = checkDraw(draw, listParticipants(), listRestrictions());
+  if (status.added.length > 0 || status.removed.length > 0) {
+    throw new SendError(
+      "The participant list changed since this draw. Make new assignments first.",
+    );
+  }
+  if (status.restricted > 0) {
+    throw new SendError("The restrictions changed since this draw. Make new assignments first.");
+  }
+}
+
+/**
+ * Emails each giver in the latest draw, which must be `drawId` and still up to
+ * date. "unsent" skips anyone already emailed successfully. Throws SendError
+ * if the draw can't be emailed.
+ */
+export function sendDrawEmails(drawId: number, mode: "unsent" | "all") {
+  return oneSendAtATime(async () => {
+    const draw = currentDraw(drawId);
+    assertUpToDate(draw);
+    const targets = draw.assignments.filter((a) => mode === "all" || a.emailStatus !== "sent");
+    const results = { sent: 0, logged: 0, failed: 0 };
+    // One at a time keeps us well under SMTP providers' rate limits.
+    for (const assignment of targets) {
+      results[await deliver(draw.name, assignment)]++;
+    }
+    return results;
+  });
+}
+
+/** Emails one giver in the latest draw, under the same rules as sendDrawEmails. */
+export function resendAssignmentEmail(drawId: number, assignmentId: number) {
+  return oneSendAtATime(async () => {
+    const draw = currentDraw(drawId);
+    const assignment = draw.assignments.find((a) => a.id === assignmentId);
+    if (!assignment || assignment.giverId === null || assignment.receiverId === null) {
+      throw new SendError("That person is no longer taking part. Make new assignments first.");
+    }
+    assertUpToDate(draw);
+    return { giverName: assignment.giverName, status: await deliver(draw.name, assignment) };
+  });
 }
 
 async function deliver(drawName: string, a: Assignment): Promise<"sent" | "logged" | "failed"> {

@@ -19,7 +19,7 @@ beforeEach(resetDb);
 /** Draws names and emails everyone, so the draw is kept in history. */
 async function keptDraw(name: string) {
   createDraw(name);
-  await sendDrawEmails(getLatestDraw()!, "all");
+  await sendDrawEmails(getLatestDraw()!.id, "all");
   return getLatestDraw()!;
 }
 

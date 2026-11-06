@@ -262,6 +262,25 @@ describe("action", () => {
       expect(sendAssignmentEmail).not.toHaveBeenCalled();
     });
 
+    it("won't email an assignment that breaks a restriction set since the draw", async () => {
+      const alice = assignmentOf("Alice");
+      restrict(people[0], people.find((p) => p.id === alice.receiverId)!);
+      expect(await resend(alice.id)).toEqual({
+        ok: false,
+        message: "The restrictions changed since this draw. Make new assignments first.",
+      });
+      expect(sendAssignmentEmail).not.toHaveBeenCalled();
+    });
+
+    it("won't email anyone while the draw is missing someone added since", async () => {
+      addPeople("Dave");
+      expect(await resend(assignmentOf("Alice").id)).toEqual({
+        ok: false,
+        message: "The participant list changed since this draw. Make new assignments first.",
+      });
+      expect(sendAssignmentEmail).not.toHaveBeenCalled();
+    });
+
     it("won't email an assignment that isn't in the current draw", async () => {
       expect(await resend(999_999)).toMatchObject({ ok: false });
       expect(sendAssignmentEmail).not.toHaveBeenCalled();
@@ -409,16 +428,14 @@ describe("page", () => {
 
     expect(
       await screen.findByText(
-        "The participant list changed since this draw (added Erin) (removed Bob). Make new assignments before emailing everyone.",
+        "The participant list changed since this draw (added Erin) (removed Bob). Make new assignments before emailing anyone.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Email all 4" })).toBeDisabled();
 
-    // Bob's row, and the row of whoever was buying for Bob, can't be sent.
+    // Nobody can be emailed one at a time either.
     for (const a of latest().assignments) {
-      const button = within(rowOf(a.giverName)).getByRole("button", { name: "Send" });
-      if (a.giverName === "Bob" || a.receiverName === "Bob") expect(button).toBeDisabled();
-      else expect(button).toBeEnabled();
+      expect(within(rowOf(a.giverName)).getByRole("button", { name: "Send" })).toBeDisabled();
     }
   });
 
@@ -432,10 +449,33 @@ describe("page", () => {
     // Doesn't say whose, so the organizer's surprise isn't spoiled.
     expect(
       await screen.findByText(
-        "1 assignment breaks a restriction set since this draw. Make new assignments before emailing everyone.",
+        "1 assignment breaks a restriction set since this draw. Make new assignments before emailing anyone.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Email all 4" })).toBeDisabled();
+    expect(within(rowOf("Alice")).getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("locks drawing and one-at-a-time sends while emails go out", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    sendAssignmentEmail.mockImplementation(async () => {
+      await gate;
+      return "sent";
+    });
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("2026");
+    const user = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Email all 3" }));
+    expect(await screen.findByRole("button", { name: "Sending…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Redraw" })).toBeDisabled();
+    for (const name of ["Alice", "Bob", "Carol"]) {
+      expect(within(rowOf(name)).getByRole("button", { name: "Send" })).toBeDisabled();
+    }
+
+    release();
+    expect(await screen.findByText("Emailed 3 people. 🎉")).toBeInTheDocument();
   });
 
   it("mentions restrictions will be followed", async () => {
@@ -451,7 +491,7 @@ describe("page", () => {
   it("starts a new draw once the last one has been emailed", async () => {
     addPeople("Alice", "Bob", "Carol");
     createDraw("Family 2025");
-    await sendDrawEmails(latest(), "all");
+    await sendDrawEmails(latest().id, "all");
     renderPage();
 
     expect(await screen.findByLabelText("Name")).toHaveValue(thisYear());

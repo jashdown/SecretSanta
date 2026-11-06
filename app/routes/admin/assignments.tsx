@@ -8,6 +8,7 @@ import {
   createDraw,
   getLatestDraw,
   resendAssignmentEmail,
+  SendError,
   sendDrawEmails,
   type Assignment,
   type Draw,
@@ -66,46 +67,39 @@ export async function action({ request }: Route.ActionArgs): Promise<Result> {
     return { ok: true, message };
   }
 
-  // Sending always targets the latest draw. Guard against a stale page
-  // (e.g. someone redrew in another tab) emailing the wrong assignments.
-  const draw = getLatestDraw();
-  if (!draw || draw.id !== Number(form.get("drawId"))) {
-    return fail("The assignments changed since this page loaded. Check them and try again.");
-  }
+  // Sending checks the draw is still current and up to date, and throws
+  // SendError if it isn't.
+  const drawId = Number(form.get("drawId"));
+  try {
+    if (intent === "send") {
+      const mode = form.get("mode") === "all" ? "all" : "unsent";
+      const { sent, logged, failed } = await sendDrawEmails(drawId, mode);
+      if (sent + logged + failed === 0) return { ok: true, message: "Everyone has already been emailed." };
+      if (logged > 0) {
+        return {
+          ok: true,
+          message: `Printed ${plural(logged, "email")} to the server console. Nothing was sent because SMTP isn't set up.`,
+        };
+      }
+      if (failed > 0) {
+        const failures = `${plural(failed, "email")} failed. See the list below.`;
+        return fail(sent > 0 ? `Emailed ${plural(sent, "person", "people")}, but ${failures}` : failures);
+      }
+      return { ok: true, message: `Emailed ${plural(sent, "person", "people")}. 🎉` };
+    }
 
-  if (intent === "send") {
-    const status = checkDraw(draw, listParticipants(), listRestrictions());
-    if (status.added.length > 0 || status.removed.length > 0) {
-      return fail("The participant list changed since this draw. Make new assignments first.");
+    if (intent === "resend") {
+      const { giverName, status } = await resendAssignmentEmail(
+        drawId,
+        Number(form.get("assignmentId")),
+      );
+      return status === "failed"
+        ? fail(`Couldn't email ${giverName}.`)
+        : { ok: true, message: `Emailed ${giverName}.` };
     }
-    if (status.restricted > 0) {
-      return fail("The restrictions changed since this draw. Make new assignments first.");
-    }
-    const mode = form.get("mode") === "all" ? "all" : "unsent";
-    const { sent, logged, failed } = await sendDrawEmails(draw, mode);
-    if (sent + logged + failed === 0) return { ok: true, message: "Everyone has already been emailed." };
-    if (logged > 0) {
-      return {
-        ok: true,
-        message: `Printed ${plural(logged, "email")} to the server console. Nothing was sent because SMTP isn't set up.`,
-      };
-    }
-    if (failed > 0) {
-      const failures = `${plural(failed, "email")} failed. See the list below.`;
-      return fail(sent > 0 ? `Emailed ${plural(sent, "person", "people")}, but ${failures}` : failures);
-    }
-    return { ok: true, message: `Emailed ${plural(sent, "person", "people")}. 🎉` };
-  }
-
-  if (intent === "resend") {
-    const assignment = draw.assignments.find((a) => a.id === Number(form.get("assignmentId")));
-    if (!assignment || assignment.giverId === null || assignment.receiverId === null) {
-      return fail("That person is no longer taking part. Make new assignments first.");
-    }
-    const status = await resendAssignmentEmail(draw, assignment.id);
-    return status === "failed"
-      ? fail(`Couldn't email ${assignment.giverName}.`)
-      : { ok: true, message: `Emailed ${assignment.giverName}.` };
+  } catch (error) {
+    if (error instanceof SendError) return fail(error.message);
+    throw error;
   }
 
   throw data("Unknown action", { status: 400 });
@@ -165,7 +159,11 @@ export default function Assignments({ loaderData, actionData }: Route.ComponentP
                 key={`${draw?.id}-${willReplace}`}
                 maxLength={100}
               />
-              <button className="btn btn-primary" disabled={pendingIntent === "draw"}>
+              {/* The server refuses to draw while emails go out, too. */}
+              <button
+                className="btn btn-primary"
+                disabled={pendingIntent === "draw" || pendingIntent === "send"}
+              >
                 {pendingIntent === "draw"
                   ? "Drawing…"
                   : willReplace
@@ -270,7 +268,7 @@ function CurrentDraw({
                 set since this draw.{" "}
               </>
             )}
-            Make new assignments before emailing everyone.
+            Make new assignments before emailing anyone.
           </Notice>
         </div>
       )}
@@ -282,6 +280,7 @@ function CurrentDraw({
             assignment={assignment}
             drawId={draw.id}
             revealed={revealed}
+            canSend={status.upToDate && !sending}
           />
         ))}
       </ul>
@@ -298,14 +297,16 @@ function AssignmentRow({
   assignment: a,
   drawId,
   revealed,
+  canSend,
 }: {
   assignment: Assignment;
   drawId: number;
   revealed: boolean;
+  /** False while everyone is being emailed, or once the draw is out of date. */
+  canSend: boolean;
 }) {
   const fetcher = useFetcher<typeof action>();
   const busy = fetcher.state !== "idle";
-  const removed = a.giverId === null || a.receiverId === null;
 
   return (
     <li className="grid gap-2 px-5 py-3 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center sm:gap-4">
@@ -343,7 +344,7 @@ function AssignmentRow({
         <input type="hidden" name="intent" value="resend" />
         <input type="hidden" name="drawId" value={drawId} />
         <input type="hidden" name="assignmentId" value={a.id} />
-        <button className="btn btn-outline btn-sm" disabled={busy || removed}>
+        <button className="btn btn-outline btn-sm" disabled={busy || !canSend}>
           {busy ? "Sending…" : a.emailStatus === "pending" ? "Send" : "Resend"}
         </button>
       </fetcher.Form>
