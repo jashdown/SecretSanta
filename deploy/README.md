@@ -123,13 +123,43 @@ Database changes apply on start. Don't restart while emails are going out.
 
 ## Backups
 
-The database is `/var/lib/patton-secret-santa/secret-santa.db`. This makes a
-safe copy while the app is running; then copy it off the server:
+The database is `/var/lib/patton-secret-santa/secret-santa.db`. A timer backs
+it up every night at 3am into
+`/home/jashdown/Network/network/Justin's Stuff/secretSantaBackup` as
+`secret-santa-YYYY-MM-DD.db`, owned by `jashdown` and readable by everyone. A
+new file is only saved when something changed since the newest backup, and old
+ones are never deleted. To change the folder or owner, edit
+`patton-secret-santa-backup.service`.
+
+To set it up:
 
 ```bash
 sudo apt-get install -y sqlite3
-sudo -u santa sqlite3 /var/lib/patton-secret-santa/secret-santa.db \
-  ".backup /var/lib/patton-secret-santa/backup.db"
+sudo install -m 755 /opt/patton-secret-santa/deploy/backup.sh /usr/local/sbin/patton-secret-santa-backup
+sudo cp /opt/patton-secret-santa/deploy/patton-secret-santa-backup.service /opt/patton-secret-santa/deploy/patton-secret-santa-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now patton-secret-santa-backup.timer
+```
+
+To back up right away and see what happened:
+
+```bash
+sudo systemctl start patton-secret-santa-backup
+journalctl -u patton-secret-santa-backup -n 5
+```
+
+`systemctl list-timers patton-secret-santa-backup` shows when it runs next.
+The script runs from `/usr/local/sbin`, so if a `git pull` changes
+`deploy/backup.sh`, run the `install` line again.
+
+To restore a backup (the `-wal` and `-shm` files belong to the old database
+and must go, or they'd be applied to the restored one):
+
+```bash
+sudo systemctl stop patton-secret-santa
+sudo rm -f /var/lib/patton-secret-santa/secret-santa.db-wal /var/lib/patton-secret-santa/secret-santa.db-shm
+sudo install -o santa -g santa -m 600 "/home/jashdown/Network/network/Justin's Stuff/secretSantaBackup/secret-santa-YYYY-MM-DD.db" /var/lib/patton-secret-santa/secret-santa.db
+sudo systemctl start patton-secret-santa
 ```
 
 ## If something's wrong
