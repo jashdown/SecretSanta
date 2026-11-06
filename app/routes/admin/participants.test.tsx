@@ -68,7 +68,7 @@ describe("action", () => {
   });
 
   it("saves who someone can't give to along with their details", async () => {
-    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol");
+    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol", "Dave");
     expect(
       await submitUpdate({ id: alice.id, name: "Alicia", email: alice.email }, [bob.id, carol.id]),
     ).toEqual({ ok: true });
@@ -185,41 +185,69 @@ describe("page", () => {
   });
 
   it("shows who each person can't give to", async () => {
-    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol");
-    restrict(alice, carol, bob);
+    const [alice, bob, carol, dave] = addPeople("Alice", "Bob", "Carol", "Dave", "Erin");
+    restrict(alice, dave, carol, bob);
     restrict(bob, alice);
+    restrict(carol, dave, alice);
     renderPage();
-    await screen.findByRole("heading", { name: "3 people" });
+    await screen.findByRole("heading", { name: "5 people" });
 
-    expect(rowOf("Alice")).toHaveTextContent("Can't give to Bob or Carol");
+    expect(rowOf("Alice")).toHaveTextContent("Can't give to Bob, Carol, or Dave");
     expect(rowOf("Bob")).toHaveTextContent("Can't give to Alice");
-    expect(rowOf("Carol")).not.toHaveTextContent("Can't give to");
+    expect(rowOf("Carol")).toHaveTextContent("Can't give to Alice or Dave");
+    expect(rowOf("Dave")).not.toHaveTextContent("Can't give to");
   });
 
   it("sets who someone can't give to", async () => {
-    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol");
-    restrict(alice, bob);
+    const [alice, , carol, dave] = addPeople("Alice", "Bob", "Carol", "Dave", "Erin");
+    restrict(alice, carol);
+    const user = renderPage();
+    await screen.findByRole("heading", { name: "5 people" });
+
+    await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
+    const picker = screen.getByRole("group", { name: "Can't give to" });
+    // Everyone but Alice herself, with her current restriction ticked.
+    const boxes = within(picker).getAllByRole("checkbox");
+    expect(boxes.map((box) => box.closest("label")!.textContent)).toEqual([
+      "Bob",
+      "Carol",
+      "Dave",
+      "Erin",
+    ]);
+    expect(boxes.filter((box) => (box as HTMLInputElement).checked)).toEqual([
+      within(picker).getByRole("checkbox", { name: "Carol" }),
+    ]);
+
+    await user.click(within(picker).getByRole("checkbox", { name: "Bob" }));
+    await user.click(within(picker).getByRole("checkbox", { name: "Dave" }));
+    await user.click(within(picker).getByRole("checkbox", { name: "Bob" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(rowOf("Alice")).toHaveTextContent("Can't give to Carol or Dave"));
+    expect(listRestrictions()).toEqual([
+      { giverId: alice.id, receiverId: carol.id },
+      { giverId: alice.id, receiverId: dave.id },
+    ]);
+  });
+
+  it("won't let someone rule out everyone", async () => {
+    addPeople("Alice", "Bob", "Carol");
     const user = renderPage();
     await screen.findByRole("heading", { name: "3 people" });
 
     await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
-    const first = screen.getByRole("combobox", { name: "Can't give to (1 of 2)" });
-    const second = screen.getByRole("combobox", { name: "Can't give to (2 of 2)" });
-    expect(first).toHaveValue(String(bob.id));
-    expect(second).toHaveValue("");
-    // Everyone but Alice herself.
-    expect(within(first).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "No one",
-      "Bob",
-      "Carol",
-    ]);
-
-    await user.selectOptions(first, "No one");
-    await user.selectOptions(second, "Carol");
+    const picker = screen.getByRole("group", { name: "Can't give to" });
+    await user.click(within(picker).getByRole("checkbox", { name: "Bob" }));
+    await user.click(within(picker).getByRole("checkbox", { name: "Carol" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(rowOf("Alice")).toHaveTextContent("Can't give to Carol"));
-    expect(listRestrictions()).toEqual([{ giverId: alice.id, receiverId: carol.id }]);
+    expect(await screen.findByText("Leave at least one person they can give to.")).toBeInTheDocument();
+    expect(picker).toHaveAccessibleDescription(
+      "This only works one way. For a couple, set it for both of them. Leave at least one person they can give to.",
+    );
+    // Still editing, with the boxes as they were.
+    expect(within(picker).getByRole("checkbox", { name: "Bob" })).toBeChecked();
+    expect(listRestrictions()).toEqual([]);
   });
 
   it("doesn't offer restrictions when there's nobody else", async () => {
@@ -229,7 +257,7 @@ describe("page", () => {
 
     await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
   it("throws away edits on Cancel or Escape", async () => {

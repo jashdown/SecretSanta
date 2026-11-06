@@ -26,7 +26,7 @@ export default function AdminLayout() {
             <span className="text-2xl" aria-hidden>
               🎅
             </span>
-            Secret Santa
+            Patton Secret Santa
           </Link>
           <Form method="post" action="/logout">
             <button className="btn btn-ghost btn-sm">Sign out</button>

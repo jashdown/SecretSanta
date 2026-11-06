@@ -4,7 +4,7 @@ import { LocalTime, PageHeader } from "~/components/ui";
 import { listDraws } from "~/lib/draws.server";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "History · Secret Santa" }];
+  return [{ title: "History · Patton Secret Santa" }];
 }
 
 export async function loader() {

@@ -120,6 +120,27 @@ describe("drawPairs with restrictions", () => {
     }
   });
 
+  it("keeps households apart, however many people each one rules out", () => {
+    // Three households of four: 1–4, 5–8 and 9–12. Nobody may give to anyone
+    // in their own household, so everyone has three restrictions.
+    const household = (id: number) => Math.ceil(id / 4);
+    const blocked = new Set<string>();
+    for (const giver of ids(12)) {
+      for (const receiver of ids(12)) {
+        if (giver !== receiver && household(giver) === household(receiver)) {
+          blocked.add(pairKey(giver, receiver));
+        }
+      }
+    }
+    for (let run = 0; run < 20; run++) {
+      const pairs = drawPairs(ids(12), { blocked });
+      expect(loopLength(pairs)).toBe(12);
+      for (const { giverId, receiverId } of pairs) {
+        expect(household(receiverId)).not.toBe(household(giverId));
+      }
+    }
+  });
+
   it("follows restrictions even if that means repeating last time's pairings", () => {
     // Only 1→3→2→1 is allowed, and it's exactly last year's draw.
     const blocked = new Set([pairKey(1, 2)]);

@@ -3,8 +3,8 @@ import type { Route } from "./+types/home";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "Secret Santa" },
-    { name: "description", content: "Our Secret Santa gift exchange." },
+    { title: "Patton Secret Santa" },
+    { name: "description", content: "Our Patton Secret Santa gift exchange." },
   ];
 }
 
@@ -15,7 +15,7 @@ export default function Home() {
         <div className="text-5xl" aria-hidden>
           🎅
         </div>
-        <h1 className="mt-4 text-3xl font-bold tracking-tight">Secret Santa</h1>
+        <h1 className="mt-4 text-3xl font-bold tracking-tight">Patton Secret Santa</h1>
         <p className="mt-3 text-stone-600 dark:text-stone-400">
           Your assignment arrives by email. Check your inbox to find out who you're buying
           for, and keep it a secret!

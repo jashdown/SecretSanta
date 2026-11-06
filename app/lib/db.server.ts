@@ -42,7 +42,6 @@ const migrations = [
   `,
   `
   -- Each row means the giver must never be given the receiver to buy for.
-  -- The app allows up to two per giver.
   CREATE TABLE restrictions (
     giver_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     receiver_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,

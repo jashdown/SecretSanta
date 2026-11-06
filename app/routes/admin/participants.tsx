@@ -7,7 +7,6 @@ import {
   deleteParticipant,
   listParticipants,
   listRestrictions,
-  MAX_RESTRICTIONS,
   parseParticipantForm,
   parseRestrictionsForm,
   updateParticipant,
@@ -16,7 +15,7 @@ import {
 } from "~/lib/participants.server";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Participants · Secret Santa" }];
+  return [{ title: "Participants · Patton Secret Santa" }];
 }
 
 type Person = Participant & {
@@ -30,7 +29,7 @@ export async function loader() {
     ...p,
     cantGiveTo: restrictions.filter((r) => r.giverId === p.id).map((r) => r.receiverId),
   }));
-  return { participants, maxRestrictions: MAX_RESTRICTIONS };
+  return { participants };
 }
 
 const invalid = (errors: ParticipantErrors) =>
@@ -70,7 +69,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Participants({ loaderData }: Route.ComponentProps) {
-  const { participants, maxRestrictions } = loaderData;
+  const { participants } = loaderData;
 
   return (
     <div className="space-y-6">
@@ -94,7 +93,6 @@ export default function Participants({ loaderData }: Route.ComponentProps) {
                 key={participant.id}
                 participant={participant}
                 everyone={participants}
-                maxRestrictions={maxRestrictions}
               />
             ))}
           </ul>
@@ -133,9 +131,12 @@ function AddParticipant() {
   );
 }
 
-type RowProps = { participant: Person; everyone: Person[]; maxRestrictions: number };
+type RowProps = { participant: Person; everyone: Person[] };
 
-function ParticipantRow({ participant, everyone, maxRestrictions }: RowProps) {
+// "Bob, Carol, or Dave". A fixed locale so the server and browser agree.
+const orList = new Intl.ListFormat("en", { type: "disjunction" });
+
+function ParticipantRow({ participant, everyone }: RowProps) {
   const [editing, setEditing] = useState(false);
   const fetcher = useFetcher<typeof action>();
 
@@ -148,7 +149,6 @@ function ParticipantRow({ participant, everyone, maxRestrictions }: RowProps) {
         <EditParticipant
           participant={participant}
           everyone={everyone}
-          maxRestrictions={maxRestrictions}
           onDone={() => setEditing(false)}
         />
       </li>
@@ -157,7 +157,7 @@ function ParticipantRow({ participant, everyone, maxRestrictions }: RowProps) {
 
   const cantGiveTo = participant.cantGiveTo
     .map((id) => everyone.find((p) => p.id === id)?.name)
-    .filter(Boolean);
+    .filter((name) => name !== undefined);
 
   return (
     <li className="flex items-center gap-3 px-5 py-3">
@@ -166,8 +166,8 @@ function ParticipantRow({ participant, everyone, maxRestrictions }: RowProps) {
         <p className="truncate font-medium">{participant.name}</p>
         <p className="truncate text-sm text-stone-500">{participant.email}</p>
         {cantGiveTo.length > 0 && (
-          <p className="mt-0.5 truncate text-xs text-amber-800 dark:text-amber-300">
-            Can't give to {cantGiveTo.join(" or ")}
+          <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">
+            Can't give to {orList.format(cantGiveTo)}
           </p>
         )}
       </div>
@@ -194,7 +194,6 @@ function ParticipantRow({ participant, everyone, maxRestrictions }: RowProps) {
 function EditParticipant({
   participant,
   everyone,
-  maxRestrictions,
   onDone,
 }: RowProps & { onDone: () => void }) {
   const fetcher = useFetcher<typeof action>();
@@ -236,7 +235,6 @@ function EditParticipant({
         <RestrictionPicker
           others={others}
           selected={participant.cantGiveTo}
-          max={maxRestrictions}
           error={errors?.cantGiveTo}
         />
       )}
@@ -255,39 +253,34 @@ function EditParticipant({
 function RestrictionPicker({
   others,
   selected,
-  max,
   error,
 }: {
   others: Participant[];
   selected: number[];
-  max: number;
   error?: string;
 }) {
   const id = useId();
   return (
-    <fieldset className="sm:col-span-2 sm:row-start-2">
+    <fieldset
+      className="sm:col-span-2 sm:row-start-2"
+      aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
+    >
       <legend className="label">Can't give to</legend>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {Array.from({ length: max }, (_, index) => (
-          <select
-            key={index}
-            name="cantGiveTo"
-            className="input"
-            aria-label={`Can't give to (${index + 1} of ${max})`}
-            aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
-            aria-invalid={error ? true : undefined}
-            defaultValue={selected[index] ?? ""}
-          >
-            <option value="">No one</option>
-            {others.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+      <div className="grid max-h-48 grid-cols-2 gap-x-4 gap-y-1.5 overflow-y-auto sm:grid-cols-3">
+        {others.map((p) => (
+          <label key={p.id} className="flex min-w-0 items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="cantGiveTo"
+              value={p.id}
+              defaultChecked={selected.includes(p.id)}
+              className="size-4 shrink-0 accent-red-700"
+            />
+            <span className="truncate">{p.name}</span>
+          </label>
         ))}
       </div>
-      <p id={`${id}-hint`} className="mt-1 text-xs text-stone-500">
+      <p id={`${id}-hint`} className="mt-1.5 text-xs text-stone-500">
         This only works one way. For a couple, set it for both of them.
       </p>
       {error && (

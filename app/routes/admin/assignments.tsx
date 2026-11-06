@@ -16,10 +16,10 @@ import { emailConfigured } from "~/lib/email.server";
 import { listParticipants, listRestrictions } from "~/lib/participants.server";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Assignments · Secret Santa" }];
+  return [{ title: "Assignments · Patton Secret Santa" }];
 }
 
-const defaultDrawName = () => `Secret Santa ${new Date().getFullYear()}`;
+const defaultDrawName = () => `Patton Secret Santa ${new Date().getFullYear()}`;
 
 export async function loader() {
   const participants = listParticipants();

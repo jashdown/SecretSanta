@@ -4,7 +4,7 @@ import { env } from "~/lib/env.server";
 import { checkPassword, isAdmin, logIn } from "~/lib/session.server";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Sign in · Secret Santa" }];
+  return [{ title: "Sign in · Patton Secret Santa" }];
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

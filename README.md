@@ -1,4 +1,4 @@
-# Secret Santa
+# Patton Secret Santa
 
 A small app for running a Secret Santa gift exchange. An organizer manages the
 list of people, draws names, and emails everyone who they're buying for. Every
@@ -10,8 +10,8 @@ Nodemailer.
 ## What it does
 
 - **Participants:** add, edit and remove people (name + email). When editing
-  someone you can also pick up to two people they can't give to, for example
-  their partner.
+  someone you can also tick the people they can't give to, for example their
+  partner. Tick as many as you like, as long as there's someone left.
 - **Assignments:** one button draws names, another emails each person their
   assignment. You can resend to one person, for example after fixing a typo in
   their email. Pairings stay hidden on screen until you click "Show pairings",
@@ -53,6 +53,13 @@ npm run dev
 Open http://localhost:5173 and sign in. In development the password is `admin`
 unless you set `ADMIN_PASSWORD`.
 
+To fill an empty database with sample people, restrictions and two past draws:
+
+```bash
+npm run db:seed              # only if the database is empty
+npm run db:seed -- --reset   # wipes everything first
+```
+
 Until SMTP is configured, "sending" prints each email to the terminal instead.
 That's a safe way to try things out. Preview sends don't count as sent, so
 redrawing afterwards still replaces the draw.
@@ -73,7 +80,7 @@ All settings are environment variables. In development you can put them in
 | `SMTP_USER`      | usually                | SMTP username.                                                           |
 | `SMTP_PASS`      | usually                | SMTP password.                                                           |
 | `SMTP_SECURE`    | no                     | Defaults to `true` for port 465; other ports use STARTTLS.               |
-| `MAIL_FROM`      | no                     | Sender, e.g. `"Secret Santa <santa@example.com>"`.                       |
+| `MAIL_FROM`      | no                     | Sender, e.g. `"Patton Secret Santa <santa@example.com>"`.                |
 
 The server won't start in production without `ADMIN_PASSWORD` and
 `SESSION_SECRET`.
@@ -88,7 +95,7 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=you@gmail.com
 SMTP_PASS=your-16-character-app-password
-MAIL_FROM="Secret Santa <you@gmail.com>"
+MAIL_FROM="Patton Secret Santa <you@gmail.com>"
 ```
 
 Any other SMTP provider works the same way (Fastmail, Postmark, SendGrid,
@@ -108,13 +115,13 @@ for example on a home network, set `COOKIE_SECURE=false` or sign-in won't stick.
 ### Docker
 
 ```bash
-docker build -t secret-santa .
+docker build -t patton-secret-santa .
 docker run -p 3000:3000 \
   -v secret-santa-data:/app/data \
   -e ADMIN_PASSWORD=... \
   -e SESSION_SECRET=... \
   -e SMTP_HOST=... -e SMTP_USER=... -e SMTP_PASS=... -e MAIL_FROM=... \
-  secret-santa
+  patton-secret-santa
 ```
 
 The volume keeps the database between container restarts. To back it up, copy

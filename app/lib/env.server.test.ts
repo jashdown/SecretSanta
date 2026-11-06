@@ -36,7 +36,7 @@ describe("in development", () => {
       cookieSecure: false,
       databasePath: "data/secret-santa.db",
       smtp: null,
-      mailFrom: "Secret Santa <santa@localhost>",
+      mailFrom: "Patton Secret Santa <santa@localhost>",
     });
   });
 

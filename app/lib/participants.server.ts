@@ -1,8 +1,5 @@
 import { all, get, run, transaction } from "./db.server";
 
-/** How many people each person can be kept from buying for. */
-export const MAX_RESTRICTIONS = 2;
-
 export type Participant = { id: number; name: string; email: string };
 
 /** The giver must never be given the receiver to buy for. */
@@ -58,8 +55,14 @@ export function updateParticipant(
   cantGiveTo?: number[],
 ) {
   transaction(() => {
-    run("UPDATE participants SET name = ?, email = ? WHERE id = ?", name, email, id);
-    if (cantGiveTo) {
+    const { changes } = run(
+      "UPDATE participants SET name = ?, email = ? WHERE id = ?",
+      name,
+      email,
+      id,
+    );
+    // Nothing to attach restrictions to if they were removed in the meantime.
+    if (changes && cantGiveTo) {
       run("DELETE FROM restrictions WHERE giver_id = ?", id);
       for (const receiverId of cantGiveTo) {
         run("INSERT INTO restrictions (giver_id, receiver_id) VALUES (?, ?)", id, receiverId);
@@ -85,7 +88,7 @@ type RestrictionsResult =
   | { ok: true; value: number[] }
   | { ok: false; errors: Pick<ParticipantErrors, "cantGiveTo"> };
 
-/** Reads who `giverId` can't buy for from the form's "cantGiveTo" fields. Blank fields mean nobody. */
+/** Reads who `giverId` can't buy for from the form's "cantGiveTo" fields. Blank values are ignored. */
 export function parseRestrictionsForm(form: FormData, giverId: number): RestrictionsResult {
   const picked = form
     .getAll("cantGiveTo")
@@ -96,15 +99,15 @@ export function parseRestrictionsForm(form: FormData, giverId: number): Restrict
     .filter((id) => id !== giverId);
   const ids = [...new Set(picked)];
 
-  if (ids.length > MAX_RESTRICTIONS) {
-    return { ok: false, errors: { cantGiveTo: `Pick up to ${MAX_RESTRICTIONS} people.` } };
-  }
-  const everyone = new Set(listParticipants().map((p) => p.id));
-  if (!ids.every((id) => everyone.has(id))) {
+  const others = new Set(listParticipants().map((p) => p.id).filter((id) => id !== giverId));
+  if (!ids.every((id) => others.has(id))) {
     return {
       ok: false,
       errors: { cantGiveTo: "Someone you picked has been removed. Pick again." },
     };
+  }
+  if (ids.length > 0 && ids.length === others.size) {
+    return { ok: false, errors: { cantGiveTo: "Leave at least one person they can give to." } };
   }
   return { ok: true, value: ids };
 }

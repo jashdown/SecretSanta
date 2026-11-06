@@ -1,5 +1,5 @@
 {
-  "name": "my-app",
+  "name": "patton-secret-santa",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "start": "react-router-serve ./build/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "react-router typegen && tsc"
+    "typecheck": "react-router typegen && tsc",
+    "db:seed": "node --experimental-strip-types scripts/seed.ts"
   },
   "dependencies": {
     "@react-router/node": "^8.5.1",

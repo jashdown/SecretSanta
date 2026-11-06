@@ -43,5 +43,5 @@ export const env = {
     : isProduction,
   databasePath: process.env.DATABASE_PATH || "data/secret-santa.db",
   smtp: smtpConfig(),
-  mailFrom: process.env.MAIL_FROM || "Secret Santa <santa@localhost>",
+  mailFrom: process.env.MAIL_FROM || "Patton Secret Santa <santa@localhost>",
 };

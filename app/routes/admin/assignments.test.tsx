@@ -27,7 +27,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const thisYear = () => `Secret Santa ${new Date().getFullYear()}`;
+const thisYear = () => `Patton Secret Santa ${new Date().getFullYear()}`;
 const latest = () => getLatestDraw()!;
 const assignmentOf = (giverName: string) =>
   latest().assignments.find((a) => a.giverName === giverName)!;
@@ -98,7 +98,7 @@ describe("action", () => {
       vi.setSystemTime(new Date("2030-12-01T12:00:00Z"));
       addPeople("Alice", "Bob", "Carol");
       await submit({ intent: "draw", name: "   " });
-      expect(latest().name).toBe("Secret Santa 2030");
+      expect(latest().name).toBe("Patton Secret Santa 2030");
     });
 
     it("says when no draw fits the restrictions, and keeps the current one", async () => {

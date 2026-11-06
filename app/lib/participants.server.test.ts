@@ -167,6 +167,24 @@ describe("restrictions", () => {
     expect(listRestrictions()).toEqual([{ giverId: carol.id, receiverId: alice.id }]);
   });
 
+  it("can be as many as you like", () => {
+    // Alice can still give to Erin.
+    const [alice, bob, carol, dave] = addPeople("Alice", "Bob", "Carol", "Dave", "Erin");
+    restrict(alice, bob, carol, dave);
+    expect(listRestrictions()).toEqual([
+      { giverId: alice.id, receiverId: bob.id },
+      { giverId: alice.id, receiverId: carol.id },
+      { giverId: alice.id, receiverId: dave.id },
+    ]);
+  });
+
+  it("aren't saved for someone removed in the meantime", () => {
+    const [alice, bob] = addPeople("Alice", "Bob");
+    deleteParticipant(alice.id);
+    updateParticipant(alice.id, alice, [bob.id]);
+    expect(listRestrictions()).toEqual([]);
+  });
+
   it("won't let someone be restricted from themselves", () => {
     const [alice] = addPeople("Alice");
     expect(() => updateParticipant(alice.id, alice, [alice.id])).toThrow(/CHECK/);
@@ -189,11 +207,11 @@ describe("parseRestrictionsForm", () => {
     return data;
   };
 
-  it("reads up to two people, ignoring blank choices", () => {
-    const [alice, bob, carol] = addPeople("Alice", "Bob", "Carol");
-    expect(parseRestrictionsForm(form(bob.id, carol.id), alice.id)).toEqual({
+  it("reads everyone picked, ignoring blank values", () => {
+    const [alice, bob, carol, dave] = addPeople("Alice", "Bob", "Carol", "Dave", "Erin");
+    expect(parseRestrictionsForm(form(bob.id, carol.id, dave.id), alice.id)).toEqual({
       ok: true,
-      value: [bob.id, carol.id],
+      value: [bob.id, carol.id, dave.id],
     });
     expect(parseRestrictionsForm(form("", bob.id), alice.id)).toEqual({
       ok: true,
@@ -204,7 +222,7 @@ describe("parseRestrictionsForm", () => {
   });
 
   it("counts the same person picked twice once", () => {
-    const [alice, bob] = addPeople("Alice", "Bob");
+    const [alice, bob] = addPeople("Alice", "Bob", "Carol");
     expect(parseRestrictionsForm(form(bob.id, bob.id), alice.id)).toEqual({
       ok: true,
       value: [bob.id],
@@ -212,19 +230,25 @@ describe("parseRestrictionsForm", () => {
   });
 
   it("ignores someone picking themselves", () => {
-    const [alice, bob] = addPeople("Alice", "Bob");
+    const [alice, bob] = addPeople("Alice", "Bob", "Carol");
     expect(parseRestrictionsForm(form(alice.id, bob.id), alice.id)).toEqual({
       ok: true,
       value: [bob.id],
     });
   });
 
-  it("allows at most two people", () => {
+  it("won't rule out everyone, or there'd be nobody left to give to", () => {
     const [alice, bob, carol, dave] = addPeople("Alice", "Bob", "Carol", "Dave");
     expect(parseRestrictionsForm(form(bob.id, carol.id, dave.id), alice.id)).toEqual({
       ok: false,
-      errors: { cantGiveTo: "Pick up to 2 people." },
+      errors: { cantGiveTo: "Leave at least one person they can give to." },
     });
+    expect(parseRestrictionsForm(form(bob.id, carol.id), alice.id)).toMatchObject({ ok: true });
+  });
+
+  it("is happy with no restrictions when someone has nobody else", () => {
+    const [alice] = addPeople("Alice");
+    expect(parseRestrictionsForm(new FormData(), alice.id)).toEqual({ ok: true, value: [] });
   });
 
   it("notices when someone picked has since been removed", () => {
