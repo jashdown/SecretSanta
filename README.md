@@ -119,6 +119,13 @@ The server listens on port 3000 (set `PORT` to change it). In production the
 login cookie is only sent over HTTPS. If you serve the app over plain http,
 for example on a home network, set `COOKIE_SECURE=false` or sign-in won't stick.
 
+Behind a reverse proxy that handles HTTPS, the public host name must be listed
+in `allowedActionOrigins` in [react-router.config.ts](react-router.config.ts),
+or every form fails with "Bad Request". It's read at build time.
+
+[deploy/README.md](deploy/README.md) walks through running it on an Ubuntu
+server with systemd, Apache and Cloudflare.
+
 ### Docker
 
 ```bash
@@ -136,7 +143,7 @@ The volume keeps the database between container restarts.
 ### Backups
 
 The database is `secret-santa.db`, in the volume (or in `data/` when running
-without Docker). Recent changes are written to `secret-santa.db-wal` next to it
+without Docker, or `/var/lib/patton-secret-santa/` with the systemd setup). Recent changes are written to `secret-santa.db-wal` next to it
 first, so copying `secret-santa.db` alone can miss them. Either:
 
 - stop the app, then copy `secret-santa.db` together with any
@@ -169,6 +176,7 @@ app/
 │       └── history.tsx
 └── components/ui.tsx
 test/                       # shared test setup and helpers
+deploy/                     # systemd service and Apache site for a server
 ```
 
 ## Tests
