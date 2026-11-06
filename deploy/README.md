@@ -75,19 +75,18 @@ If something else already uses port 3000, add `PORT=3001` to
 1. **DNS:** add a record named `santa`, proxied (orange cloud). Use a CNAME to
    `justinashdown.com` if that already points at this server, otherwise an A
    record with the server's IP.
-2. **Origin certificate:** under SSL/TLS → Origin Server, create a certificate
-   for `*.justinashdown.com` and `justinashdown.com`. Save both parts on the
-   server:
+2. **Origin certificate:** the server already has a Cloudflare Origin
+   Certificate in `/etc/ssl/certs` (`cloudflare-justinashdown-com.pem` and
+   `cloudflare-justinashdown-com-key.pem`), and the Apache site file uses it.
+   Check that it covers `*.justinashdown.com`:
 
    ```bash
-   sudo mkdir -p /etc/ssl/cloudflare
-   sudo nano /etc/ssl/cloudflare/justinashdown.com.pem   # paste the certificate
-   sudo nano /etc/ssl/cloudflare/justinashdown.com.key   # paste the private key
-   sudo chmod 600 /etc/ssl/cloudflare/justinashdown.com.key
+   sudo openssl x509 -noout -ext subjectAltName -in /etc/ssl/certs/cloudflare-justinashdown-com.pem
    ```
 
-   If the server already has a certificate covering `santa.justinashdown.com`,
-   skip this and point the Apache site file at that one instead.
+   If it doesn't, or it expires, create a new one under SSL/TLS → Origin
+   Server for `*.justinashdown.com` and `justinashdown.com`, and save it over
+   those two files.
 3. **SSL mode:** should be Full (strict). It applies to the whole domain, so if
    other sites still rely on Flexible, leave it and add a Configuration Rule
    for `santa.justinashdown.com` that sets SSL to Full (strict).
@@ -101,9 +100,12 @@ versioned names.
 sudo a2enmod ssl proxy proxy_http
 sudo cp /opt/patton-secret-santa/deploy/santa.justinashdown.com.conf /etc/apache2/sites-available/
 sudo a2ensite santa.justinashdown.com
-sudo apache2ctl configtest
-sudo systemctl restart apache2
+sudo apache2ctl configtest && sudo systemctl restart apache2
 ```
+
+The site file uses the certificate from step 5, so save that first. If
+`configtest` reports an error, fix it before restarting, or Apache won't start
+and your other sites go down too.
 
 Open https://santa.justinashdown.com and sign in.
 
@@ -132,6 +134,9 @@ sudo -u santa sqlite3 /var/lib/patton-secret-santa/secret-santa.db \
 
 ## If something's wrong
 
+- **Apache says `SSLCertificateFile: file ... does not exist or is empty`:**
+  the certificate from step 5 isn't saved at the path in the site file. Save
+  it there, or point the site file at a certificate you already have.
 - **"Bad Request" when signing in or saving:** the address in the browser
   doesn't match `allowedActionOrigins` in `react-router.config.ts`. Fix it,
   rebuild and restart.
