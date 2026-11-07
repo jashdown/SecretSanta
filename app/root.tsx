@@ -11,6 +11,10 @@ import type { Route } from "./+types/root";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
+  // sizes="32x32" keeps Chrome from picking the .ico over the SVG.
+  { rel: "icon", href: "/favicon.ico", sizes: "32x32" },
+  { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+  { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
