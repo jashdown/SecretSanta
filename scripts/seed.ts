@@ -33,14 +33,30 @@ type Person = keyof typeof people;
 
 const removed: Person[] = ["ray"];
 
-// A few people have wish lists; everyone else hasn't added one yet.
-const wishlists: Partial<Record<Person, string[]>> = {
+// Everyone has a wish list, some with more than one link. The links are made up.
+const wishlists: Record<Person, string[]> = {
   alice: ["https://www.amazon.com/hz/wishlist/ls/EXAMPLE1ALICE"],
+  ben: [
+    "https://www.amazon.com/hz/wishlist/ls/EXAMPLE2BEN",
+    "https://www.rei.com/lists/example-ben",
+  ],
   chloe: [
     "https://www.elfster.com/wishlist/example-chloe/",
-    "https://www.amazon.com/hz/wishlist/ls/EXAMPLE2CHLOE",
+    "https://www.amazon.com/hz/wishlist/ls/EXAMPLE3CHLOE",
   ],
-  hiro: ["https://www.amazon.com/hz/wishlist/ls/EXAMPLE3HIRO"],
+  dan: ["https://www.target.com/gift-registry/list/example-dan"],
+  emma: [
+    "https://www.etsy.com/people/example-emma/favorites",
+    "https://bookshop.org/lists/example-emma",
+    "https://www.amazon.com/hz/wishlist/ls/EXAMPLE4EMMA",
+  ],
+  frank: ["https://www.amazon.com/hz/wishlist/ls/EXAMPLE5FRANK"],
+  grace: [
+    "https://www.elfster.com/wishlist/example-grace/",
+    "https://www.uncommongoods.com/wishlist/example-grace",
+  ],
+  ray: ["https://www.amazon.com/hz/wishlist/ls/EXAMPLE6RAY"],
+  hiro: ["https://www.amazon.com/hz/wishlist/ls/EXAMPLE7HIRO"],
 };
 
 // Couples can't draw each other, and Emma can't draw Grace either.
@@ -98,7 +114,7 @@ db.transaction(() => {
         "INSERT INTO participants (name, email, wishlist, created_at) VALUES (?, ?, ?, ?)",
         p.name,
         p.email,
-        JSON.stringify(wishlists[key] ?? []),
+        JSON.stringify(wishlists[key]),
         p.joined,
       ).lastInsertRowid,
     );
