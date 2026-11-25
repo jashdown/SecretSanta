@@ -296,13 +296,15 @@ export function emailSantaOf(drawId: number, receiverId: number) {
     if (!a) {
       throw new SendError("That person isn't in the current draw. Make new assignments first.");
     }
+    const wishlists = wishlistsById();
     let status: "sent" | "logged" | "failed";
     try {
       status = await sendAssignmentEmail({
         to: a.giverEmail,
         giverName: a.giverName,
         receiverName: a.receiverName,
-        wishlist: wishlistsById().get(receiverId) ?? [],
+        wishlist: wishlists.get(receiverId) ?? [],
+        ownWishlist: (a.giverId !== null && wishlists.get(a.giverId)) || [],
         drawName: draw.name,
         update: true,
       });
@@ -330,6 +332,7 @@ async function deliver(
       giverName: a.giverName,
       receiverName: a.receiverName,
       wishlist: (a.receiverId !== null && wishlists.get(a.receiverId)) || [],
+      ownWishlist: (a.giverId !== null && wishlists.get(a.giverId)) || [],
       drawName,
     });
   } catch (error) {

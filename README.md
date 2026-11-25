@@ -14,9 +14,10 @@ Nodemailer.
   web page, up to 10), and tick the people they can't give to, for example
   their partner. Tick as many as you like, as long as there's someone left.
 - **Assignments:** one button draws names, another emails each person their
-  assignment, along with the wish list links of the person they're buying for.
-  Links are read when the email goes out, so ones added after the draw are
-  included. If someone's wish list changes after emails have gone out, click
+  assignment, along with the wish list links of the person they're buying for
+  and a reminder to keep their own wish list up to date, with links to it (left
+  out if they don't have one). Links are read when the email goes out, so ones
+  added after the draw are included. If someone's wish list changes after emails have gone out, click
   "Email their Santa" next to Resend in their row. Whoever is buying for them
   gets their assignment again with the new links, without you seeing who that
   is: nothing in the list of assignments changes, and a failure only says what

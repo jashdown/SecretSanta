@@ -27,6 +27,8 @@ type AssignmentEmail = {
   receiverName: string;
   /** Links to the receiver's wish lists. Left out of the email when empty. */
   wishlist: string[];
+  /** Links to the giver's own wish lists, with a reminder to keep them up to date. Left out when empty. */
+  ownWishlist: string[];
   drawName: string;
   /** Sent again so they have the latest wish list: says so, and that the person hasn't changed. */
   update?: boolean;
@@ -74,7 +76,17 @@ export async function sendAssignmentEmail(email: AssignmentEmail): Promise<"sent
 const wishlistHeading = (wishlist: string[]) =>
   wishlist.length === 1 ? "Their wish list:" : "Their wish lists:";
 
-function renderText({ giverName, receiverName, wishlist, drawName, update }: AssignmentEmail) {
+const ownWishlistReminder = (ownWishlist: string[]) =>
+  `Don't forget to keep your own wish ${ownWishlist.length === 1 ? "list" : "lists"} up to date, so your Santa knows what you'd like:`;
+
+function renderText({
+  giverName,
+  receiverName,
+  wishlist,
+  ownWishlist,
+  drawName,
+  update,
+}: AssignmentEmail) {
   return [
     `Hi ${giverName},`,
     "",
@@ -86,8 +98,20 @@ function renderText({ giverName, receiverName, wishlist, drawName, update }: Ass
       : update
         ? [NO_WISHLIST, ""]
         : []),
+    ...(ownWishlist.length ? [ownWishlistReminder(ownWishlist), ...ownWishlist, ""] : []),
     `This is for ${drawName}. Keep it a secret! 🤫🎁`,
   ].join("\n");
+}
+
+function renderLinksHtml(links: string[], indent: string) {
+  // Links are checked to be http(s) when they're saved, so they're safe in href.
+  return links
+    .map((link) => {
+      const safe = escapeHtml(link);
+      return `
+${indent}  <li style="margin:0 0 4px;word-break:break-all"><a href="${safe}" style="color:#b91c1c">${safe}</a></li>`;
+    })
+    .join("");
 }
 
 function renderWishlistHtml(wishlist: string[], update = false) {
@@ -95,19 +119,31 @@ function renderWishlistHtml(wishlist: string[], update = false) {
     return update ? `
         <p style="margin:0 0 24px">${NO_WISHLIST}</p>` : "";
   }
-  // Links are checked to be http(s) when they're saved, so they're safe in href.
-  const items = wishlist.map((link) => {
-    const safe = escapeHtml(link);
-    return `
-          <li style="margin:0 0 4px;word-break:break-all"><a href="${safe}" style="color:#b91c1c">${safe}</a></li>`;
-  });
   return `
         <p style="margin:0 0 8px">${wishlistHeading(wishlist)}</p>
-        <ul style="margin:0 0 24px;padding-left:20px">${items.join("")}
+        <ul style="margin:0 0 24px;padding-left:20px">${renderLinksHtml(wishlist, "        ")}
         </ul>`;
 }
 
-function renderHtml({ giverName, receiverName, wishlist, drawName, update }: AssignmentEmail) {
+/** Boxed off so it isn't mistaken for the list of the person they're buying for. */
+function renderOwnWishlistHtml(ownWishlist: string[]) {
+  if (ownWishlist.length === 0) return "";
+  return `
+        <div style="margin:0 0 24px;padding:16px;background:#f5f5f4;border-radius:12px;font-size:14px">
+          <p style="margin:0 0 8px">${ownWishlistReminder(ownWishlist)}</p>
+          <ul style="margin:0;padding-left:20px">${renderLinksHtml(ownWishlist, "          ")}
+          </ul>
+        </div>`;
+}
+
+function renderHtml({
+  giverName,
+  receiverName,
+  wishlist,
+  ownWishlist,
+  drawName,
+  update,
+}: AssignmentEmail) {
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:24px;background:#f5f5f4;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1c1917">
@@ -117,7 +153,7 @@ function renderHtml({ giverName, receiverName, wishlist, drawName, update }: Ass
         <p style="margin:0 0 16px">Hi ${escapeHtml(giverName)},</p>${update ? `
         <p style="margin:0 0 16px">${UPDATE_INTRO}</p>` : ""}
         <p style="margin:0 0 8px">You're the Secret Santa for:</p>
-        <p style="margin:0 0 24px;font-size:28px;font-weight:700;color:#047857">${escapeHtml(receiverName)}</p>${renderWishlistHtml(wishlist, update)}
+        <p style="margin:0 0 24px;font-size:28px;font-weight:700;color:#047857">${escapeHtml(receiverName)}</p>${renderWishlistHtml(wishlist, update)}${renderOwnWishlistHtml(ownWishlist)}
         <p style="margin:0;color:#57534e">Keep it a secret! 🤫🎁</p>
       </div>
     </div>

@@ -11,6 +11,7 @@ const email = {
   giverName: "Alice",
   receiverName: "Bob",
   wishlist: [] as string[],
+  ownWishlist: [] as string[],
   drawName: "Secret Santa 2026",
 };
 
@@ -107,6 +108,7 @@ describe("with SMTP", () => {
       giverName: `<script>alert("hi")</script>`,
       receiverName: "Tom & Jerry's",
       wishlist: [`https://a.example/?q="><script>&x='1'`],
+      ownWishlist: [`https://own.example/?q="><script>`],
       drawName: "<b>2026</b>",
     });
 
@@ -117,6 +119,7 @@ describe("with SMTP", () => {
     expect(html).toContain(
       `href="https://a.example/?q=&quot;&gt;&lt;script&gt;&amp;x=&#39;1&#39;"`,
     );
+    expect(html).toContain(`href="https://own.example/?q=&quot;&gt;&lt;script&gt;"`);
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<b>");
     // Plain text needs no escaping.
@@ -175,6 +178,64 @@ describe("with SMTP", () => {
     );
     expect(html).not.toContain("wish list");
     expect(html).not.toContain("<ul");
+  });
+
+  it("reminds them to keep their own wish list up to date, with a link to it", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    await sendAssignmentEmail({
+      ...email,
+      wishlist: ["https://www.elfster.com/wishlist/42/"],
+      ownWishlist: ["https://www.amazon.com/hz/wishlist/ls/ALICE?ref_=wl_share&type=wishlist"],
+    });
+
+    const { html, text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(text).toBe(
+      [
+        "Hi Alice,",
+        "",
+        "You're the Secret Santa for: Bob",
+        "",
+        "Their wish list:",
+        "https://www.elfster.com/wishlist/42/",
+        "",
+        "Don't forget to keep your own wish list up to date, so your Santa knows what you'd like:",
+        "https://www.amazon.com/hz/wishlist/ls/ALICE?ref_=wl_share&type=wishlist",
+        "",
+        "This is for Secret Santa 2026. Keep it a secret! 🤫🎁",
+      ].join("\n"),
+    );
+    expect(html).toContain("Don't forget to keep your own wish list up to date");
+    expect(html).toContain(
+      `<a href="https://www.amazon.com/hz/wishlist/ls/ALICE?ref_=wl_share&amp;type=wishlist"`,
+    );
+    // After the receiver's list, so the two aren't mixed up.
+    expect(html.indexOf("ls/ALICE")).toBeGreaterThan(html.indexOf("wishlist/42/"));
+  });
+
+  it("says \"lists\" in the reminder for more than one link", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    await sendAssignmentEmail({
+      ...email,
+      ownWishlist: ["https://a.example/alice", "https://b.example/alice"],
+    });
+    const { html, text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(text).toContain(
+      "Don't forget to keep your own wish lists up to date, so your Santa knows what you'd like:\n" +
+        "https://a.example/alice\nhttps://b.example/alice\n",
+    );
+    expect(html).toContain("your own wish lists up to date");
+    expect(html).toContain(`<a href="https://b.example/alice"`);
+  });
+
+  it("reminds them in an update too", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    await sendAssignmentEmail({ ...email, ownWishlist: ["https://a.example/alice"], update: true });
+    const { text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(text).toContain(
+      "They don't have a wish list right now.\n\n" +
+        "Don't forget to keep your own wish list up to date, so your Santa knows what you'd like:\n" +
+        "https://a.example/alice\n",
+    );
   });
 
   it("says an update is an update, and that the person hasn't changed", async () => {

@@ -350,6 +350,7 @@ describe("sendDrawEmails", () => {
         giverName: a.giverName,
         receiverName: a.receiverName,
         wishlist: [],
+        ownWishlist: [],
         drawName: "Secret Santa 2026",
       });
     }
@@ -362,7 +363,7 @@ describe("sendDrawEmails", () => {
     }
   });
 
-  it("includes the wish list of the person each giver is buying for", async () => {
+  it("includes the wish list of the person each giver is buying for, and their own", async () => {
     // Added after the draw, so the email has to read it when sending.
     for (const p of listParticipants()) {
       updateParticipant(p.id, { ...p, wishlist: [`https://lists.example.com/${p.name}`] });
@@ -374,6 +375,7 @@ describe("sendDrawEmails", () => {
         expect.objectContaining({
           to: a.giverEmail,
           wishlist: [`https://lists.example.com/${a.receiverName}`],
+          ownWishlist: [`https://lists.example.com/${a.giverName}`],
         }),
       );
     }
@@ -488,6 +490,7 @@ describe("resendAssignmentEmail", () => {
       giverName: "Carol",
       receiverName: carol.receiverName,
       wishlist: [],
+      ownWishlist: [],
       drawName: "Secret Santa 2026",
     });
     expect(latest().assignments.map((a) => [a.giverName, a.emailStatus])).toEqual([
@@ -556,9 +559,24 @@ describe("emailSantaOf", () => {
       giverName: santa.giverName,
       receiverName: "Bob",
       wishlist: ["https://lists.example.com/bob"],
+      ownWishlist: [],
       drawName: "Secret Santa 2026",
       update: true,
     });
+  });
+
+  it("includes the Santa's own wish list", async () => {
+    const santa = santaOf("Bob");
+    const giver = people.find((p) => p.id === santa.giverId)!;
+    updateParticipant(giver.id, { ...giver, wishlist: ["https://lists.example.com/santa"] });
+
+    await emailSantaOf(latest().id, person("Bob").id);
+    expect(sendAssignmentEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: santa.giverEmail,
+        ownWishlist: ["https://lists.example.com/santa"],
+      }),
+    );
   });
 
   it("reports preview-only sends", async () => {
