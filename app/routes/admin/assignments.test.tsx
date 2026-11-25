@@ -56,6 +56,7 @@ describe("loader", () => {
       status: null,
       emailConfigured: false,
       defaultName: thisYear(),
+      canEmailSantas: false,
     });
   });
 
@@ -288,6 +289,54 @@ describe("action", () => {
     });
   });
 
+  describe("emailSanta", () => {
+    let alice: ReturnType<typeof addPeople>[number];
+    beforeEach(() => {
+      [alice] = addPeople("Alice", "Bob", "Carol");
+      createDraw("2026");
+    });
+
+    const emailSanta = (receiverId: number) =>
+      submit({ intent: "emailSanta", drawId: latest().id, receiverId });
+    const alicesSanta = () => latest().assignments.find((a) => a.receiverId === alice.id)!;
+
+    it("emails someone's Santa without saying who that is", async () => {
+      const result = await emailSanta(alice.id);
+      expect(result).toEqual({ ok: true, message: "Emailed Alice's Secret Santa." });
+      expect(result.message).not.toContain(alicesSanta().giverName);
+      expect(sendAssignmentEmail).toHaveBeenCalledOnce();
+      expect(sendAssignmentEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: alicesSanta().giverEmail, receiverName: "Alice", update: true }),
+      );
+    });
+
+    it("explains that nothing was really sent without SMTP", async () => {
+      sendAssignmentEmail.mockResolvedValue("logged");
+      expect(await emailSanta(alice.id)).toEqual({
+        ok: true,
+        message:
+          "Printed the email for Alice's Secret Santa to the server console. Nothing was sent because SMTP isn't set up.",
+      });
+    });
+
+    it("doesn't say who it failed for", async () => {
+      failFor(alicesSanta().giverEmail);
+      expect(await emailSanta(alice.id)).toEqual({
+        ok: false,
+        message: "Couldn't email Alice's Secret Santa. The server log has the details.",
+      });
+    });
+
+    it("passes on why it refused", async () => {
+      addPeople("Dave");
+      expect(await emailSanta(alice.id)).toEqual({
+        ok: false,
+        message: "The participant list changed since this draw. Make new assignments first.",
+      });
+      expect(sendAssignmentEmail).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects anything else", async () => {
     addPeople("Alice", "Bob", "Carol");
     createDraw("2026");
@@ -404,6 +453,103 @@ describe("page", () => {
     expect(within(rowOf("Bob")).getByText("Failed")).toBeInTheDocument();
     expect(within(rowOf("Bob")).getByText("Mailbox full")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Email the 1 not yet sent" })).toBeInTheDocument();
+  });
+
+  describe("Email their Santa", () => {
+    const santaButtons = () => screen.queryAllByRole("button", { name: "Email their Santa" });
+
+    /** Draws names and emails everyone, so the buttons are offered. */
+    async function emailedDraw(...names: string[]) {
+      const people = addPeople(...names);
+      createDraw("2026");
+      await sendDrawEmails(latest().id, "all");
+      sendAssignmentEmail.mockClear();
+      return people;
+    }
+
+    it("isn't offered until emails have gone out", async () => {
+      addPeople("Alice", "Bob", "Carol");
+      createDraw("2026");
+      renderPage();
+      await screen.findByRole("button", { name: "Email all 3" });
+      expect(santaButtons()).toEqual([]);
+    });
+
+    it("isn't offered once the draw is out of date", async () => {
+      await emailedDraw("Alice", "Bob", "Carol");
+      addPeople("Dave");
+      renderPage();
+      await screen.findByText(/The participant list changed/);
+      expect(santaButtons()).toEqual([]);
+    });
+
+    it("is next to Resend in everyone's row", async () => {
+      await emailedDraw("Alice", "Bob", "Carol");
+      renderPage();
+      await screen.findByRole("button", { name: "Resend to everyone" });
+      for (const name of ["Alice", "Bob", "Carol"]) {
+        const row = within(rowOf(name));
+        expect(row.getByRole("button", { name: "Resend" })).toBeInTheDocument();
+        expect(row.getByRole("button", { name: "Email their Santa" })).toBeInTheDocument();
+      }
+    });
+
+    it("emails whoever is buying for that row's person, without saying who", async () => {
+      const [alice] = await emailedDraw("Alice", "Bob", "Carol");
+      const before = latest().assignments;
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const user = renderPage();
+      await screen.findByRole("button", { name: "Resend to everyone" });
+
+      await user.click(within(rowOf("Alice")).getByRole("button", { name: "Email their Santa" }));
+      expect(confirm).toHaveBeenCalledWith(
+        "Email Alice's Secret Santa their assignment again, with Alice's current wish list? You won't see who it goes to.",
+      );
+      expect(await screen.findByText("Emailed Alice's Secret Santa.")).toBeInTheDocument();
+
+      const santa = before.find((a) => a.receiverId === alice.id)!;
+      expect(sendAssignmentEmail).toHaveBeenCalledOnce();
+      expect(sendAssignmentEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: santa.giverEmail, receiverName: "Alice", update: true }),
+      );
+      // Every row reads as it did, so the page doesn't give the Santa away.
+      expect(latest().assignments).toEqual(before);
+    });
+
+    it("shows it's sending in that person's row, not their Santa's", async () => {
+      await emailedDraw("Alice", "Bob", "Carol");
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      sendAssignmentEmail.mockImplementation(async () => {
+        await gate;
+        return "sent";
+      });
+      const user = renderPage();
+      await screen.findByRole("button", { name: "Resend to everyone" });
+
+      await user.click(within(rowOf("Alice")).getByRole("button", { name: "Email their Santa" }));
+      expect(await within(rowOf("Alice")).findByRole("button", { name: "Emailing…" })).toBeDisabled();
+      // Only one button on the page says anything is going out.
+      expect(screen.getAllByRole("button", { name: /…$/ })).toHaveLength(1);
+      for (const name of ["Bob", "Carol"]) {
+        expect(within(rowOf(name)).getByRole("button", { name: "Resend" })).toBeDisabled();
+        expect(within(rowOf(name)).getByRole("button", { name: "Email their Santa" })).toBeDisabled();
+      }
+
+      release();
+      expect(await screen.findByText("Emailed Alice's Secret Santa.")).toBeInTheDocument();
+    });
+
+    it("sends nothing if you cancel", async () => {
+      await emailedDraw("Alice", "Bob", "Carol");
+      vi.spyOn(window, "confirm").mockReturnValue(false);
+      const user = renderPage();
+      await screen.findByRole("button", { name: "Resend to everyone" });
+
+      await user.click(within(rowOf("Bob")).getByRole("button", { name: "Email their Santa" }));
+      expect(sendAssignmentEmail).not.toHaveBeenCalled();
+    });
   });
 
   it("emails one person from their row", async () => {

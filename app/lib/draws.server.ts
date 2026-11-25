@@ -264,6 +264,58 @@ export function resendAssignmentEmail(drawId: number, assignmentId: number) {
   });
 }
 
+/**
+ * The latest draw's id when its givers can be re-emailed about the person
+ * they're buying for (see emailSantaOf): the draw is up to date and emails
+ * have started going out. The answer is the same for everyone, so offering
+ * the button never hints at who has whom.
+ */
+export function santaUpdateDrawId(): number | null {
+  const draw = getLatestDraw();
+  if (!draw) return null;
+  const emailed = draw.assignments.some(
+    (a) => a.emailStatus === "sent" || a.emailStatus === "logged",
+  );
+  const { upToDate } = checkDraw(draw, listParticipants(), listRestrictions());
+  return emailed && upToDate ? draw.id : null;
+}
+
+/**
+ * Emails whoever is buying for `receiverId` in the latest draw their
+ * assignment again, with the receiver's current wish list, without the
+ * organizer learning who that is. So the giver's row is left alone (a new
+ * status or time would give them away), and a failure is only described in
+ * the server log, since SMTP errors often contain the address. Throws
+ * SendError under the same rules as sendDrawEmails.
+ */
+export function emailSantaOf(drawId: number, receiverId: number) {
+  return oneSendAtATime(async () => {
+    const draw = currentDraw(drawId);
+    assertUpToDate(draw);
+    const a = draw.assignments.find((x) => x.receiverId === receiverId);
+    if (!a) {
+      throw new SendError("That person isn't in the current draw. Make new assignments first.");
+    }
+    let status: "sent" | "logged" | "failed";
+    try {
+      status = await sendAssignmentEmail({
+        to: a.giverEmail,
+        giverName: a.giverName,
+        receiverName: a.receiverName,
+        wishlist: wishlistsById().get(receiverId) ?? [],
+        drawName: draw.name,
+        update: true,
+      });
+    } catch (error) {
+      console.error(`Failed to email ${a.giverEmail} (wish list update): ${messageOf(error)}`);
+      status = "failed";
+    }
+    return { receiverName: a.receiverName, status };
+  });
+}
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 async function deliver(
   drawName: string,
   a: Assignment,
@@ -281,7 +333,7 @@ async function deliver(
       drawName,
     });
   } catch (error) {
-    errorMessage = error instanceof Error ? error.message : String(error);
+    errorMessage = messageOf(error);
     console.error(`Failed to email ${a.giverEmail}: ${errorMessage}`);
     status = "failed";
   }

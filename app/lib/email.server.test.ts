@@ -177,6 +177,42 @@ describe("with SMTP", () => {
     expect(html).not.toContain("<ul");
   });
 
+  it("says an update is an update, and that the person hasn't changed", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    await sendAssignmentEmail({
+      ...email,
+      wishlist: ["https://www.elfster.com/wishlist/42/"],
+      update: true,
+    });
+
+    const { subject, html, text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(subject).toBe("🎅 Secret Santa wish list update — Secret Santa 2026");
+    expect(text).toBe(
+      [
+        "Hi Alice,",
+        "",
+        "Here's your assignment again with their latest wish list. You're still buying for the same person.",
+        "",
+        "You're the Secret Santa for: Bob",
+        "",
+        "Their wish list:",
+        "https://www.elfster.com/wishlist/42/",
+        "",
+        "This is for Secret Santa 2026. Keep it a secret! 🤫🎁",
+      ].join("\n"),
+    );
+    expect(html).toContain("Here's your assignment again");
+    expect(html).toContain(`<a href="https://www.elfster.com/wishlist/42/"`);
+  });
+
+  it("says there's no wish list in an update, in case it was just cleared", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    await sendAssignmentEmail({ ...email, update: true });
+    const { html, text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(text).toContain("You're the Secret Santa for: Bob\n\nThey don't have a wish list right now.\n");
+    expect(html).toContain("They don't have a wish list right now.");
+  });
+
   it("passes send errors on to the caller", async () => {
     const { sendAssignmentEmail } = await loadEmail(smtp);
     nodemailer.sendMail.mockRejectedValue(new Error("Mailbox unavailable"));

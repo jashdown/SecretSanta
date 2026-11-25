@@ -6,8 +6,10 @@ import { DrawError, MIN_PARTICIPANTS } from "~/lib/assign.server";
 import {
   checkDraw,
   createDraw,
+  emailSantaOf,
   getLatestDraw,
   resendAssignmentEmail,
+  santaUpdateDrawId,
   SendError,
   sendDrawEmails,
   type Assignment,
@@ -34,6 +36,8 @@ export async function loader() {
     status: draw ? checkDraw(draw, participants, restrictions) : null,
     emailConfigured,
     defaultName: defaultDrawName(),
+    /** Whether rows offer "Email their Santa". The same for every row. */
+    canEmailSantas: draw !== null && santaUpdateDrawId() === draw.id,
   };
 }
 
@@ -93,6 +97,23 @@ export async function action({ request }: Route.ActionArgs): Promise<Result> {
       return status === "failed"
         ? fail(`Couldn't email ${giverName}.`)
         : { ok: true, message: `Emailed ${giverName}.` };
+    }
+
+    // Messages name only the receiver, never their Santa.
+    if (intent === "emailSanta") {
+      const { receiverName, status } = await emailSantaOf(
+        drawId,
+        Number(form.get("receiverId")),
+      );
+      const santa = `${receiverName}'s Secret Santa`;
+      if (status === "failed") return fail(`Couldn't email ${santa}. The server log has the details.`);
+      if (status === "logged") {
+        return {
+          ok: true,
+          message: `Printed the email for ${santa} to the server console. Nothing was sent because SMTP isn't set up.`,
+        };
+      }
+      return { ok: true, message: `Emailed ${santa}.` };
     }
   } catch (error) {
     if (error instanceof SendError) return fail(error.message);
@@ -186,7 +207,14 @@ export default function Assignments({ loaderData, actionData }: Route.ComponentP
         )}
       </section>
 
-      {draw && status && <CurrentDraw key={draw.id} draw={draw} status={status} />}
+      {draw && status && (
+        <CurrentDraw
+          key={draw.id}
+          draw={draw}
+          status={status}
+          canEmailSantas={loaderData.canEmailSantas}
+        />
+      )}
     </div>
   );
 }
@@ -194,9 +222,11 @@ export default function Assignments({ loaderData, actionData }: Route.ComponentP
 function CurrentDraw({
   draw,
   status,
+  canEmailSantas,
 }: {
   draw: Draw;
   status: NonNullable<Route.ComponentProps["loaderData"]["status"]>;
+  canEmailSantas: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
   const navigation = useNavigation();
@@ -204,6 +234,8 @@ function CurrentDraw({
   const pending = submitting ? navigation.formData : undefined;
   const sendingAll = pending?.get("intent") === "send";
   const sendingTo = pending?.get("intent") === "resend" ? Number(pending.get("assignmentId")) : null;
+  // Whose Santa is being emailed. Shown in that person's own row, never their Santa's.
+  const santaFor = pending?.get("intent") === "emailSanta" ? Number(pending.get("receiverId")) : null;
 
   const total = draw.assignments.length;
   const participantsChanged = status.added.length > 0 || status.removed.length > 0;
@@ -279,6 +311,8 @@ function CurrentDraw({
             revealed={revealed}
             canSend={status.upToDate && !submitting}
             sending={sendingTo === assignment.id}
+            canEmailSanta={canEmailSantas}
+            emailingSanta={assignment.giverId !== null && santaFor === assignment.giverId}
           />
         ))}
       </ul>
@@ -297,6 +331,8 @@ function AssignmentRow({
   revealed,
   canSend,
   sending,
+  canEmailSanta,
+  emailingSanta,
 }: {
   assignment: Assignment;
   drawId: number;
@@ -305,6 +341,10 @@ function AssignmentRow({
   canSend: boolean;
   /** This person's email is going out right now. */
   sending: boolean;
+  /** Offer "Email their Santa". Decided for the whole draw, never per row. */
+  canEmailSanta: boolean;
+  /** The email to this person's Santa is going out right now. */
+  emailingSanta: boolean;
 }) {
   return (
     <li className="grid gap-2 px-5 py-3 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center sm:gap-4">
@@ -338,15 +378,41 @@ function AssignmentRow({
           <p className="mt-1 text-xs break-words text-red-700 dark:text-red-400">{a.emailError}</p>
         )}
       </div>
-      {/* A page form, not a fetcher, so the result shows in the notice at the top. */}
-      <Form method="post">
-        <input type="hidden" name="intent" value="resend" />
-        <input type="hidden" name="drawId" value={drawId} />
-        <input type="hidden" name="assignmentId" value={a.id} />
-        <button className="btn btn-outline btn-sm" disabled={!canSend}>
-          {sending ? "Sending…" : a.emailStatus === "pending" ? "Send" : "Resend"}
-        </button>
-      </Form>
+      {/* Page forms, not fetchers, so the result shows in the notice at the top. */}
+      <div className="flex flex-wrap gap-2">
+        <Form method="post">
+          <input type="hidden" name="intent" value="resend" />
+          <input type="hidden" name="drawId" value={drawId} />
+          <input type="hidden" name="assignmentId" value={a.id} />
+          <button className="btn btn-outline btn-sm" disabled={!canSend}>
+            {sending ? "Sending…" : a.emailStatus === "pending" ? "Send" : "Resend"}
+          </button>
+        </Form>
+        {/* Emails whoever is buying for this person, e.g. after their wish
+            list changed. Nothing on the page shows who that is. */}
+        {canEmailSanta && a.giverId !== null && (
+          <Form
+            method="post"
+            onSubmit={(event) => {
+              const ok = confirm(
+                `Email ${a.giverName}'s Secret Santa their assignment again, with ${a.giverName}'s current wish list? You won't see who it goes to.`,
+              );
+              if (!ok) event.preventDefault();
+            }}
+          >
+            <input type="hidden" name="intent" value="emailSanta" />
+            <input type="hidden" name="drawId" value={drawId} />
+            <input type="hidden" name="receiverId" value={a.giverId} />
+            <button
+              className="btn btn-outline btn-sm"
+              disabled={!canSend}
+              title={`Send ${a.giverName}'s Secret Santa their assignment again with ${a.giverName}'s latest wish list`}
+            >
+              {emailingSanta ? "Emailing…" : "Email their Santa"}
+            </button>
+          </Form>
+        )}
+      </div>
     </li>
   );
 }

@@ -3,9 +3,11 @@ import { addPeople, moveToLastYear, resetDb, restrict } from "../../test/helpers
 import {
   checkDraw,
   createDraw,
+  emailSantaOf,
   getLatestDraw,
   listDraws,
   resendAssignmentEmail,
+  santaUpdateDrawId,
   SendError,
   sendDrawEmails,
   type Draw,
@@ -529,5 +531,136 @@ describe("resendAssignmentEmail", () => {
       new SendError("The participant list changed since this draw. Make new assignments first."),
     );
     expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("emailSantaOf", () => {
+  let people: ReturnType<typeof addPeople>;
+  beforeEach(() => {
+    people = addPeople("Alice", "Bob", "Carol");
+    createDraw("Secret Santa 2026");
+  });
+  const person = (name: string) => people.find((p) => p.name === name)!;
+  const santaOf = (receiverName: string) =>
+    latest().assignments.find((a) => a.receiverName === receiverName)!;
+
+  it("emails whoever is buying for that person, with their current wish list", async () => {
+    const bob = person("Bob");
+    updateParticipant(bob.id, { ...bob, wishlist: ["https://lists.example.com/bob"] });
+    const santa = santaOf("Bob");
+
+    expect(await emailSantaOf(latest().id, bob.id)).toEqual({ receiverName: "Bob", status: "sent" });
+    expect(sendAssignmentEmail).toHaveBeenCalledOnce();
+    expect(sendAssignmentEmail).toHaveBeenCalledWith({
+      to: santa.giverEmail,
+      giverName: santa.giverName,
+      receiverName: "Bob",
+      wishlist: ["https://lists.example.com/bob"],
+      drawName: "Secret Santa 2026",
+      update: true,
+    });
+  });
+
+  it("reports preview-only sends", async () => {
+    sendAssignmentEmail.mockResolvedValue("logged");
+    expect(await emailSantaOf(latest().id, person("Alice").id)).toEqual({
+      receiverName: "Alice",
+      status: "logged",
+    });
+  });
+
+  it("leaves every assignment as it was, so nothing shows whose Santa was emailed", async () => {
+    await sendDrawEmails(latest().id, "unsent");
+    const before = latest().assignments;
+
+    await emailSantaOf(latest().id, person("Alice").id);
+    expect(latest().assignments).toEqual(before);
+  });
+
+  it("keeps the details of a failure in the server log, not on the assignment", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    sendAssignmentEmail.mockRejectedValue(new Error("Mailbox full"));
+    const before = latest().assignments;
+
+    expect(await emailSantaOf(latest().id, person("Alice").id)).toEqual({
+      receiverName: "Alice",
+      status: "failed",
+    });
+    expect(latest().assignments).toEqual(before);
+    expect(errorLog).toHaveBeenCalledWith(
+      `Failed to email ${santaOf("Alice").giverEmail} (wish list update): Mailbox full`,
+    );
+  });
+
+  it("refuses a draw that has since been replaced", async () => {
+    const staleId = latest().id;
+    createDraw("Redrawn");
+    await expect(emailSantaOf(staleId, person("Alice").id)).rejects.toThrow(
+      new SendError("The assignments changed since this page loaded. Check them and try again."),
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+
+  it("refuses once the draw is out of date", async () => {
+    addPeople("Dave");
+    await expect(emailSantaOf(latest().id, person("Alice").id)).rejects.toThrow(
+      new SendError("The participant list changed since this draw. Make new assignments first."),
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+
+  it("refuses someone who isn't in the draw", async () => {
+    await expect(emailSantaOf(latest().id, 999_999)).rejects.toThrow(
+      new SendError("That person isn't in the current draw. Make new assignments first."),
+    );
+    expect(sendAssignmentEmail).not.toHaveBeenCalled();
+  });
+
+  it("waits its turn behind other sends, and blocks drawing meanwhile", async () => {
+    const release = holdEmails();
+    const sending = sendDrawEmails(latest().id, "all");
+    const update = emailSantaOf(latest().id, person("Alice").id);
+
+    expect(() => createDraw("Redraw")).toThrow(DrawError);
+    release();
+    await sending;
+    expect(await update).toMatchObject({ status: "sent" });
+    expect(sendAssignmentEmail).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("santaUpdateDrawId", () => {
+  it("is null without a draw, or before anyone has been emailed", () => {
+    addPeople("Alice", "Bob", "Carol");
+    expect(santaUpdateDrawId()).toBeNull();
+    createDraw("2026");
+    expect(santaUpdateDrawId()).toBeNull();
+  });
+
+  it("is the latest draw once emails have gone out, even as console previews", async () => {
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("2026");
+    sendAssignmentEmail.mockResolvedValue("logged");
+    await resendAssignmentEmail(latest().id, latest().assignments[0].id);
+    expect(santaUpdateDrawId()).toBe(latest().id);
+  });
+
+  it("ignores emails that only failed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("2026");
+    sendAssignmentEmail.mockRejectedValue(new Error("SMTP is down"));
+    await sendDrawEmails(latest().id, "all");
+    expect(santaUpdateDrawId()).toBeNull();
+  });
+
+  it("is null again once the draw is out of date", async () => {
+    addPeople("Alice", "Bob", "Carol");
+    createDraw("2026");
+    await sendDrawEmails(latest().id, "all");
+    expect(santaUpdateDrawId()).toBe(latest().id);
+
+    addPeople("Dave");
+    expect(santaUpdateDrawId()).toBeNull();
   });
 });

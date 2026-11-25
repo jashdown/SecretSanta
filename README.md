@@ -16,7 +16,11 @@ Nodemailer.
 - **Assignments:** one button draws names, another emails each person their
   assignment, along with the wish list links of the person they're buying for.
   Links are read when the email goes out, so ones added after the draw are
-  included. You can resend to one person, for example after fixing a typo in
+  included. If someone's wish list changes after emails have gone out, click
+  "Email their Santa" next to Resend in their row. Whoever is buying for them
+  gets their assignment again with the new links, without you seeing who that
+  is: nothing in the list of assignments changes, and a failure only says what
+  went wrong in the server log. You can resend to one person, for example after fixing a typo in
   their email. Pairings stay hidden on screen until you click "Show pairings",
   so the organizer can take part too.
 - **History:** every draw that was emailed, plus a table of who each person

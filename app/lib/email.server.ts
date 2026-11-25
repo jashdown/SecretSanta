@@ -28,7 +28,13 @@ type AssignmentEmail = {
   /** Links to the receiver's wish lists. Left out of the email when empty. */
   wishlist: string[];
   drawName: string;
+  /** Sent again so they have the latest wish list: says so, and that the person hasn't changed. */
+  update?: boolean;
 };
+
+const UPDATE_INTRO =
+  "Here's your assignment again with their latest wish list. You're still buying for the same person.";
+const NO_WISHLIST = "They don't have a wish list right now.";
 
 /**
  * Sends the "you're the Secret Santa for…" email. Without SMTP settings the
@@ -38,7 +44,9 @@ export async function sendAssignmentEmail(email: AssignmentEmail): Promise<"sent
   const message = {
     from: env.mailFrom,
     to: { name: email.giverName, address: email.to },
-    subject: `🎅 Your Secret Santa assignment — ${email.drawName}`,
+    subject: email.update
+      ? `🎅 Secret Santa wish list update — ${email.drawName}`
+      : `🎅 Your Secret Santa assignment — ${email.drawName}`,
     text: renderText(email),
     html: renderHtml(email),
   };
@@ -66,19 +74,27 @@ export async function sendAssignmentEmail(email: AssignmentEmail): Promise<"sent
 const wishlistHeading = (wishlist: string[]) =>
   wishlist.length === 1 ? "Their wish list:" : "Their wish lists:";
 
-function renderText({ giverName, receiverName, wishlist, drawName }: AssignmentEmail) {
+function renderText({ giverName, receiverName, wishlist, drawName, update }: AssignmentEmail) {
   return [
     `Hi ${giverName},`,
     "",
+    ...(update ? [UPDATE_INTRO, ""] : []),
     `You're the Secret Santa for: ${receiverName}`,
     "",
-    ...(wishlist.length ? [wishlistHeading(wishlist), ...wishlist, ""] : []),
+    ...(wishlist.length
+      ? [wishlistHeading(wishlist), ...wishlist, ""]
+      : update
+        ? [NO_WISHLIST, ""]
+        : []),
     `This is for ${drawName}. Keep it a secret! 🤫🎁`,
   ].join("\n");
 }
 
-function renderWishlistHtml(wishlist: string[]) {
-  if (wishlist.length === 0) return "";
+function renderWishlistHtml(wishlist: string[], update = false) {
+  if (wishlist.length === 0) {
+    return update ? `
+        <p style="margin:0 0 24px">${NO_WISHLIST}</p>` : "";
+  }
   // Links are checked to be http(s) when they're saved, so they're safe in href.
   const items = wishlist.map((link) => {
     const safe = escapeHtml(link);
@@ -91,16 +107,17 @@ function renderWishlistHtml(wishlist: string[]) {
         </ul>`;
 }
 
-function renderHtml({ giverName, receiverName, wishlist, drawName }: AssignmentEmail) {
+function renderHtml({ giverName, receiverName, wishlist, drawName, update }: AssignmentEmail) {
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:24px;background:#f5f5f4;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1c1917">
     <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e7e5e4">
       <div style="background:#b91c1c;color:#ffffff;padding:20px 24px;font-size:18px;font-weight:600">🎅 ${escapeHtml(drawName)}</div>
       <div style="padding:24px">
-        <p style="margin:0 0 16px">Hi ${escapeHtml(giverName)},</p>
+        <p style="margin:0 0 16px">Hi ${escapeHtml(giverName)},</p>${update ? `
+        <p style="margin:0 0 16px">${UPDATE_INTRO}</p>` : ""}
         <p style="margin:0 0 8px">You're the Secret Santa for:</p>
-        <p style="margin:0 0 24px;font-size:28px;font-weight:700;color:#047857">${escapeHtml(receiverName)}</p>${renderWishlistHtml(wishlist)}
+        <p style="margin:0 0 24px;font-size:28px;font-weight:700;color:#047857">${escapeHtml(receiverName)}</p>${renderWishlistHtml(wishlist, update)}
         <p style="margin:0;color:#57534e">Keep it a secret! 🤫🎁</p>
       </div>
     </div>
