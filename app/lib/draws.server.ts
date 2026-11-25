@@ -223,6 +223,14 @@ function assertUpToDate(draw: Draw) {
 }
 
 /**
+ * Everyone's wish list by participant id. Read when sending rather than copied
+ * into the draw, so links added after names were drawn still go out.
+ */
+function wishlistsById() {
+  return new Map(listParticipants().map((p) => [p.id, p.wishlist]));
+}
+
+/**
  * Emails each giver in the latest draw, which must be `drawId` and still up to
  * date. "unsent" skips anyone already emailed successfully. Throws SendError
  * if the draw can't be emailed.
@@ -232,10 +240,11 @@ export function sendDrawEmails(drawId: number, mode: "unsent" | "all") {
     const draw = currentDraw(drawId);
     assertUpToDate(draw);
     const targets = draw.assignments.filter((a) => mode === "all" || a.emailStatus !== "sent");
+    const wishlists = wishlistsById();
     const results = { sent: 0, logged: 0, failed: 0 };
     // One at a time keeps us well under SMTP providers' rate limits.
     for (const assignment of targets) {
-      results[await deliver(draw.name, assignment)]++;
+      results[await deliver(draw.name, assignment, wishlists)]++;
     }
     return results;
   });
@@ -250,11 +259,16 @@ export function resendAssignmentEmail(drawId: number, assignmentId: number) {
       throw new SendError("That person is no longer taking part. Make new assignments first.");
     }
     assertUpToDate(draw);
-    return { giverName: assignment.giverName, status: await deliver(draw.name, assignment) };
+    const status = await deliver(draw.name, assignment, wishlistsById());
+    return { giverName: assignment.giverName, status };
   });
 }
 
-async function deliver(drawName: string, a: Assignment): Promise<"sent" | "logged" | "failed"> {
+async function deliver(
+  drawName: string,
+  a: Assignment,
+  wishlists: Map<number, string[]>,
+): Promise<"sent" | "logged" | "failed"> {
   const attemptedAt = new Date().toISOString();
   let status: "sent" | "logged" | "failed";
   let errorMessage: string | null = null;
@@ -263,6 +277,7 @@ async function deliver(drawName: string, a: Assignment): Promise<"sent" | "logge
       to: a.giverEmail,
       giverName: a.giverName,
       receiverName: a.receiverName,
+      wishlist: (a.receiverId !== null && wishlists.get(a.receiverId)) || [],
       drawName,
     });
   } catch (error) {

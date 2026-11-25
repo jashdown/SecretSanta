@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ComponentProps } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ComponentProps } from "react";
 import { data, useFetcher } from "react-router";
 import type { Route } from "./+types/participants";
 import { PageHeader } from "~/components/ui";
@@ -75,7 +75,7 @@ export default function Participants({ loaderData }: Route.ComponentProps) {
     <div className="space-y-6">
       <PageHeader
         title="Participants"
-        description="Everyone taking part in the gift exchange. Use Edit to choose who someone can't give to."
+        description="Everyone taking part in the gift exchange. Use Edit to add someone's wish list or choose who they can't give to."
       />
       <AddParticipant />
       <section className="card">
@@ -165,6 +165,25 @@ function ParticipantRow({ participant, everyone }: RowProps) {
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium">{participant.name}</p>
         <p className="truncate text-sm text-stone-500">{participant.email}</p>
+        {participant.wishlist.length > 0 && (
+          <p className="mt-0.5 truncate text-xs text-stone-500">
+            Wish list:{" "}
+            {participant.wishlist.map((link, i) => (
+              <Fragment key={link}>
+                {i > 0 && ", "}
+                <a
+                  href={link}
+                  title={link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-red-700 underline hover:no-underline dark:text-red-400"
+                >
+                  {siteName(link)}
+                </a>
+              </Fragment>
+            ))}
+          </p>
+        )}
         {cantGiveTo.length > 0 && (
           <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">
             Can't give to {orList.format(cantGiveTo)}
@@ -231,6 +250,7 @@ function EditParticipant({
         error={errors?.email}
         required
       />
+      <WishlistField defaultValue={participant.wishlist.join("\n")} error={errors?.wishlist} />
       {others.length > 0 && (
         <RestrictionPicker
           others={others}
@@ -262,7 +282,7 @@ function RestrictionPicker({
   const id = useId();
   return (
     <fieldset
-      className="sm:col-span-2 sm:row-start-2"
+      className="sm:col-span-2 sm:row-start-3"
       aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
     >
       <legend className="label">Can't give to</legend>
@@ -290,6 +310,41 @@ function RestrictionPicker({
       )}
     </fieldset>
   );
+}
+
+function WishlistField({ defaultValue, error }: { defaultValue: string; error?: string }) {
+  const id = useId();
+  return (
+    <div className="sm:col-span-2 sm:row-start-2">
+      <label htmlFor={id} className="label">
+        Wish list links
+      </label>
+      <textarea
+        id={id}
+        name="wishlist"
+        rows={3}
+        className="input resize-y"
+        defaultValue={defaultValue}
+        placeholder="https://www.amazon.com/hz/wishlist/ls/…"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
+      />
+      <p id={`${id}-hint`} className="mt-1.5 text-xs text-stone-500">
+        One per line, like an Amazon or Elfster wish list. They go in the email to whoever buys
+        for this person.
+      </p>
+      {error && (
+        <p id={`${id}-error`} className="field-error">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** "amazon.com" for https://www.amazon.com/hz/wishlist/… */
+function siteName(link: string) {
+  return new URL(link).hostname.replace(/^www\./, "");
 }
 
 function Field({

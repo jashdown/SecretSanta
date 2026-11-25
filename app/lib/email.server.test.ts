@@ -10,6 +10,7 @@ const email = {
   to: "alice@example.com",
   giverName: "Alice",
   receiverName: "Bob",
+  wishlist: [] as string[],
   drawName: "Secret Santa 2026",
 };
 
@@ -105,6 +106,7 @@ describe("with SMTP", () => {
       to: "x@example.com",
       giverName: `<script>alert("hi")</script>`,
       receiverName: "Tom & Jerry's",
+      wishlist: [`https://a.example/?q="><script>&x='1'`],
       drawName: "<b>2026</b>",
     });
 
@@ -112,10 +114,67 @@ describe("with SMTP", () => {
     expect(html).toContain("&lt;script&gt;alert(&quot;hi&quot;)&lt;/script&gt;");
     expect(html).toContain("Tom &amp; Jerry&#39;s");
     expect(html).toContain("&lt;b&gt;2026&lt;/b&gt;");
+    expect(html).toContain(
+      `href="https://a.example/?q=&quot;&gt;&lt;script&gt;&amp;x=&#39;1&#39;"`,
+    );
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<b>");
     // Plain text needs no escaping.
     expect(text).toContain("Tom & Jerry's");
+  });
+
+  it("lists the receiver's wish list links", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    const wishlist = [
+      "https://www.amazon.com/hz/wishlist/ls/ABC123?ref_=wl_share&type=wishlist",
+      "https://www.elfster.com/wishlist/42/",
+    ];
+    await sendAssignmentEmail({ ...email, wishlist });
+
+    const { html, text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(text).toBe(
+      [
+        "Hi Alice,",
+        "",
+        "You're the Secret Santa for: Bob",
+        "",
+        "Their wish lists:",
+        "https://www.amazon.com/hz/wishlist/ls/ABC123?ref_=wl_share&type=wishlist",
+        "https://www.elfster.com/wishlist/42/",
+        "",
+        "This is for Secret Santa 2026. Keep it a secret! 🤫🎁",
+      ].join("\n"),
+    );
+    expect(html).toContain("Their wish lists:");
+    expect(html).toContain(
+      `<a href="https://www.amazon.com/hz/wishlist/ls/ABC123?ref_=wl_share&amp;type=wishlist"`,
+    );
+    expect(html).toContain(`<a href="https://www.elfster.com/wishlist/42/"`);
+  });
+
+  it("says \"wish list\" for a single link", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    await sendAssignmentEmail({ ...email, wishlist: ["https://www.elfster.com/wishlist/42/"] });
+    const { html, text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(text).toContain("Their wish list:\nhttps://www.elfster.com/wishlist/42/\n");
+    expect(html).toContain("Their wish list:");
+  });
+
+  it("leaves the wish list out when there isn't one", async () => {
+    const { sendAssignmentEmail } = await loadEmail(smtp);
+    await sendAssignmentEmail(email);
+    const { html, text } = nodemailer.sendMail.mock.calls[0][0];
+    expect(text).toBe(
+      [
+        "Hi Alice,",
+        "",
+        "You're the Secret Santa for: Bob",
+        "",
+        "This is for Secret Santa 2026. Keep it a secret! 🤫🎁",
+      ].join("\n"),
+    );
+    expect(html).not.toContain("wish list");
+    expect(html).not.toContain("<ul");
   });
 
   it("passes send errors on to the caller", async () => {

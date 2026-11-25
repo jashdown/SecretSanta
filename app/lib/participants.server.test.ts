@@ -29,15 +29,34 @@ describe("create, update and delete", () => {
   it("saves, changes and removes a person", () => {
     createParticipant({ name: "Alice", email: "alice@example.com" });
     const [alice] = listParticipants();
-    expect(alice).toEqual({ id: expect.any(Number), name: "Alice", email: "alice@example.com" });
+    expect(alice).toEqual({
+      id: expect.any(Number),
+      name: "Alice",
+      email: "alice@example.com",
+      wishlist: [],
+    });
 
-    updateParticipant(alice.id, { name: "Alicia", email: "alicia@example.com" });
+    updateParticipant(alice.id, {
+      name: "Alicia",
+      email: "alicia@example.com",
+      wishlist: ["https://www.amazon.com/hz/wishlist/ls/ABC", "https://www.elfster.com/"],
+    });
     expect(listParticipants()).toEqual([
-      { id: alice.id, name: "Alicia", email: "alicia@example.com" },
+      {
+        id: alice.id,
+        name: "Alicia",
+        email: "alicia@example.com",
+        wishlist: ["https://www.amazon.com/hz/wishlist/ls/ABC", "https://www.elfster.com/"],
+      },
     ]);
 
     deleteParticipant(alice.id);
     expect(listParticipants()).toEqual([]);
+  });
+
+  it("can start someone off with a wish list", () => {
+    createParticipant({ name: "Alice", email: "alice@example.com", wishlist: ["https://a.example/"] });
+    expect(listParticipants()[0].wishlist).toEqual(["https://a.example/"]);
   });
 
   it("never reuses an id after someone is removed", () => {
@@ -62,7 +81,7 @@ describe("parseParticipantForm", () => {
     );
     expect(result).toEqual({
       ok: true,
-      value: { name: "Alice Smith", email: "alice@example.com" },
+      value: { name: "Alice Smith", email: "alice@example.com", wishlist: [] },
     });
   });
 
@@ -112,13 +131,92 @@ describe("parseParticipantForm", () => {
       formData({ name: "Alicia", email: "alice@example.com" }),
       alice.id,
     );
-    expect(result).toEqual({ ok: true, value: { name: "Alicia", email: "alice@example.com" } });
+    expect(result).toEqual({
+      ok: true,
+      value: { name: "Alicia", email: "alice@example.com", wishlist: [] },
+    });
   });
 
   it("won't let someone take another person's email when editing", () => {
     const [alice, bob] = addPeople("Alice", "Bob");
     const result = parseParticipantForm(formData({ name: "Bob", email: alice.email }), bob.id);
     expect(result).toEqual({ ok: false, errors: { email: "Alice already uses this email." } });
+  });
+});
+
+describe("parseParticipantForm wish list", () => {
+  const parse = (wishlist: string) =>
+    parseParticipantForm(formData({ name: "Alice", email: "alice@example.com", wishlist }));
+
+  it("reads one link per line, skipping blank lines", () => {
+    expect(
+      parse(
+        "  https://www.amazon.com/hz/wishlist/ls/ABC123?ref_=wl_share \r\n\r\n" +
+          "http://www.elfster.com/wishlist/42/\n   \n",
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        wishlist: [
+          "https://www.amazon.com/hz/wishlist/ls/ABC123?ref_=wl_share",
+          "http://www.elfster.com/wishlist/42/",
+        ],
+      },
+    });
+  });
+
+  it("is empty when left blank or left out", () => {
+    expect(parse("  \n ")).toMatchObject({ ok: true, value: { wishlist: [] } });
+    expect(
+      parseParticipantForm(formData({ name: "Alice", email: "alice@example.com" })),
+    ).toMatchObject({ ok: true, value: { wishlist: [] } });
+  });
+
+  it("adds https:// when it's left off", () => {
+    expect(parse("amazon.com/hz/wishlist/ls/ABC\nwww.elfster.com")).toMatchObject({
+      ok: true,
+      value: { wishlist: ["https://amazon.com/hz/wishlist/ls/ABC", "https://www.elfster.com/"] },
+    });
+  });
+
+  it("keeps each link once", () => {
+    expect(parse("https://a.example/list\nhttps://a.example/list\na.example/list")).toMatchObject({
+      ok: true,
+      value: { wishlist: ["https://a.example/list"] },
+    });
+  });
+
+  it.each([
+    ["Amazon", 1],
+    ["https://a.example/\nmy amazon list", 2],
+    ["https://a.example/\n\njavascript:alert(document.cookie)", 3],
+    ["ftp://files.example.com/list", 1],
+    ["mailto:santa@example.com", 1],
+    ["https://www.amazon.com@evil.example/list", 1],
+    [`https://a.example/${"x".repeat(2000)}`, 1],
+  ])("says which line isn't a web link in %j", (wishlist, line) => {
+    expect(parse(wishlist)).toEqual({
+      ok: false,
+      errors: { wishlist: `Line ${line} doesn't look like a web link.` },
+    });
+  });
+
+  it("allows up to 10 links", () => {
+    const links = (n: number) =>
+      Array.from({ length: n }, (_, i) => `https://a.example/${i}`).join("\n");
+    expect(parse(links(10))).toMatchObject({ ok: true });
+    expect(parse(links(11))).toEqual({
+      ok: false,
+      errors: { wishlist: "Keep it to 10 links or fewer." },
+    });
+  });
+
+  it("is reported along with other problems", () => {
+    expect(parseParticipantForm(formData({ name: "", email: "a@example.com", wishlist: "nope" })))
+      .toEqual({
+        ok: false,
+        errors: { name: "Enter a name.", wishlist: "Line 1 doesn't look like a web link." },
+      });
   });
 });
 
@@ -147,7 +245,7 @@ describe("restrictions", () => {
   it("are left alone when only the name and email change", () => {
     const [alice, bob] = addPeople("Alice", "Bob");
     restrict(alice, bob);
-    updateParticipant(alice.id, { name: "Alicia", email: alice.email });
+    updateParticipant(alice.id, { ...alice, name: "Alicia" });
     expect(listRestrictions()).toEqual([{ giverId: alice.id, receiverId: bob.id }]);
   });
 
@@ -193,7 +291,7 @@ describe("restrictions", () => {
   it("save nothing when part of the update fails", () => {
     const [alice, bob] = addPeople("Alice", "Bob");
     expect(() =>
-      updateParticipant(alice.id, { name: "Alicia", email: alice.email }, [bob.id, 999_999]),
+      updateParticipant(alice.id, { ...alice, name: "Alicia" }, [bob.id, 999_999]),
     ).toThrow(/FOREIGN KEY/);
     expect(listParticipants().map((p) => p.name)).toEqual(["Alice", "Bob"]);
     expect(listRestrictions()).toEqual([]);

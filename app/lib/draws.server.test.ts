@@ -210,7 +210,7 @@ describe("createDraw", () => {
   it("shows people's current names and emails", () => {
     const [alice] = addPeople("Alice", "Bob", "Carol");
     createDraw("2026");
-    updateParticipant(alice.id, { name: "Alicia", email: "alicia@example.com" });
+    updateParticipant(alice.id, { ...alice, name: "Alicia", email: "alicia@example.com" });
 
     const draw = latest();
     expect(draw.assignments.find((a) => a.giverId === alice.id)).toMatchObject({
@@ -347,6 +347,7 @@ describe("sendDrawEmails", () => {
         to: a.giverEmail,
         giverName: a.giverName,
         receiverName: a.receiverName,
+        wishlist: [],
         drawName: "Secret Santa 2026",
       });
     }
@@ -356,6 +357,23 @@ describe("sendDrawEmails", () => {
         emailError: null,
         emailedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
       });
+    }
+  });
+
+  it("includes the wish list of the person each giver is buying for", async () => {
+    // Added after the draw, so the email has to read it when sending.
+    for (const p of listParticipants()) {
+      updateParticipant(p.id, { ...p, wishlist: [`https://lists.example.com/${p.name}`] });
+    }
+    await sendDrawEmails(latest().id, "unsent");
+
+    for (const a of latest().assignments) {
+      expect(sendAssignmentEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: a.giverEmail,
+          wishlist: [`https://lists.example.com/${a.receiverName}`],
+        }),
+      );
     }
   });
 
@@ -467,6 +485,7 @@ describe("resendAssignmentEmail", () => {
       to: "carol@example.com",
       giverName: "Carol",
       receiverName: carol.receiverName,
+      wishlist: [],
       drawName: "Secret Santa 2026",
     });
     expect(latest().assignments.map((a) => [a.giverName, a.emailStatus])).toEqual([

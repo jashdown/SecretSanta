@@ -25,6 +25,8 @@ type AssignmentEmail = {
   to: string;
   giverName: string;
   receiverName: string;
+  /** Links to the receiver's wish lists. Left out of the email when empty. */
+  wishlist: string[];
   drawName: string;
 };
 
@@ -61,17 +63,35 @@ export async function sendAssignmentEmail(email: AssignmentEmail): Promise<"sent
   return "sent";
 }
 
-function renderText({ giverName, receiverName, drawName }: AssignmentEmail) {
+const wishlistHeading = (wishlist: string[]) =>
+  wishlist.length === 1 ? "Their wish list:" : "Their wish lists:";
+
+function renderText({ giverName, receiverName, wishlist, drawName }: AssignmentEmail) {
   return [
     `Hi ${giverName},`,
     "",
     `You're the Secret Santa for: ${receiverName}`,
     "",
+    ...(wishlist.length ? [wishlistHeading(wishlist), ...wishlist, ""] : []),
     `This is for ${drawName}. Keep it a secret! 🤫🎁`,
   ].join("\n");
 }
 
-function renderHtml({ giverName, receiverName, drawName }: AssignmentEmail) {
+function renderWishlistHtml(wishlist: string[]) {
+  if (wishlist.length === 0) return "";
+  // Links are checked to be http(s) when they're saved, so they're safe in href.
+  const items = wishlist.map((link) => {
+    const safe = escapeHtml(link);
+    return `
+          <li style="margin:0 0 4px;word-break:break-all"><a href="${safe}" style="color:#b91c1c">${safe}</a></li>`;
+  });
+  return `
+        <p style="margin:0 0 8px">${wishlistHeading(wishlist)}</p>
+        <ul style="margin:0 0 24px;padding-left:20px">${items.join("")}
+        </ul>`;
+}
+
+function renderHtml({ giverName, receiverName, wishlist, drawName }: AssignmentEmail) {
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:24px;background:#f5f5f4;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1c1917">
@@ -80,7 +100,7 @@ function renderHtml({ giverName, receiverName, drawName }: AssignmentEmail) {
       <div style="padding:24px">
         <p style="margin:0 0 16px">Hi ${escapeHtml(giverName)},</p>
         <p style="margin:0 0 8px">You're the Secret Santa for:</p>
-        <p style="margin:0 0 24px;font-size:28px;font-weight:700;color:#047857">${escapeHtml(receiverName)}</p>
+        <p style="margin:0 0 24px;font-size:28px;font-weight:700;color:#047857">${escapeHtml(receiverName)}</p>${renderWishlistHtml(wishlist)}
         <p style="margin:0;color:#57534e">Keep it a secret! 🤫🎁</p>
       </div>
     </div>

@@ -3,7 +3,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRoutesStub } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteParticipant, listParticipants, listRestrictions } from "~/lib/participants.server";
+import {
+  deleteParticipant,
+  listParticipants,
+  listRestrictions,
+  updateParticipant,
+} from "~/lib/participants.server";
 import {
   addPeople,
   HydrateFallback,
@@ -33,7 +38,7 @@ describe("action", () => {
       { ok: true },
     );
     expect(listParticipants()).toEqual([
-      { id: expect.any(Number), name: "Alice", email: "alice@example.com" },
+      { id: expect.any(Number), name: "Alice", email: "alice@example.com", wishlist: [] },
     ]);
   });
 
@@ -94,6 +99,40 @@ describe("action", () => {
     });
     expect(listParticipants()).toEqual([alice]);
     expect(listRestrictions()).toEqual([]);
+  });
+
+  it("saves someone's wish list along with their details", async () => {
+    const [alice] = addPeople("Alice", "Bob");
+    expect(
+      await submit({
+        intent: "update",
+        id: alice.id,
+        name: "Alice",
+        email: alice.email,
+        wishlist: "amazon.com/hz/wishlist/ls/ABC\r\nhttps://www.elfster.com/wishlist/42/",
+      }),
+    ).toEqual({ ok: true });
+    expect(listParticipants()[0].wishlist).toEqual([
+      "https://amazon.com/hz/wishlist/ls/ABC",
+      "https://www.elfster.com/wishlist/42/",
+    ]);
+  });
+
+  it("won't save a wish list line that isn't a link", async () => {
+    const [alice] = addPeople("Alice", "Bob");
+    expect(
+      await submit({
+        intent: "update",
+        id: alice.id,
+        name: "Alicia",
+        email: alice.email,
+        wishlist: "https://www.elfster.com/\nmy amazon list",
+      }),
+    ).toMatchObject({
+      data: { ok: false, errors: { wishlist: "Line 2 doesn't look like a web link." } },
+      init: { status: 400 },
+    });
+    expect(listParticipants()).toContainEqual(alice);
   });
 
   it("removes someone", async () => {
@@ -258,6 +297,64 @@ describe("page", () => {
     await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("shows each person's wish list links", async () => {
+    const [alice] = addPeople("Alice", "Bob");
+    updateParticipant(alice.id, {
+      ...alice,
+      wishlist: ["https://www.amazon.com/hz/wishlist/ls/ABC", "https://www.elfster.com/wishlist/42/"],
+    });
+    renderPage();
+    await screen.findByRole("heading", { name: "2 people" });
+
+    const row = rowOf("Alice");
+    expect(row).toHaveTextContent("Wish list: amazon.com, elfster.com");
+    const amazon = within(row).getByRole("link", { name: "amazon.com" });
+    expect(amazon).toHaveAttribute("href", "https://www.amazon.com/hz/wishlist/ls/ABC");
+    expect(amazon).toHaveAttribute("target", "_blank");
+    expect(rowOf("Bob")).not.toHaveTextContent("Wish list");
+  });
+
+  it("edits someone's wish list", async () => {
+    const [alice] = addPeople("Alice", "Bob");
+    updateParticipant(alice.id, { ...alice, wishlist: ["https://www.amazon.com/hz/wishlist/ls/ABC"] });
+    const user = renderPage();
+    await screen.findByRole("heading", { name: "2 people" });
+
+    await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
+    const field = screen.getByLabelText("Wish list links");
+    expect(field).toHaveValue("https://www.amazon.com/hz/wishlist/ls/ABC");
+    await user.type(field, "{Enter}elfster.com/wishlist/42");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(rowOf("Alice")).toHaveTextContent("Wish list: amazon.com, elfster.com"),
+    );
+    expect(listParticipants()[0].wishlist).toEqual([
+      "https://www.amazon.com/hz/wishlist/ls/ABC",
+      "https://elfster.com/wishlist/42",
+    ]);
+  });
+
+  it("shows a wish list problem next to the field", async () => {
+    addPeople("Alice", "Bob");
+    const user = renderPage();
+    await screen.findByRole("heading", { name: "2 people" });
+
+    await user.click(within(rowOf("Alice")).getByRole("button", { name: "Edit" }));
+    const field = screen.getByLabelText("Wish list links");
+    await user.type(field, "my amazon list");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(field).toHaveAccessibleDescription(
+        expect.stringContaining("Line 1 doesn't look like a web link."),
+      ),
+    );
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveValue("my amazon list");
+    expect(listParticipants()[0].wishlist).toEqual([]);
   });
 
   it("throws away edits on Cancel or Escape", async () => {

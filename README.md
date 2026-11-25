@@ -10,10 +10,13 @@ Nodemailer.
 ## What it does
 
 - **Participants:** add, edit and remove people (name + email). When editing
-  someone you can also tick the people they can't give to, for example their
-  partner. Tick as many as you like, as long as there's someone left.
+  someone you can also add links to their wish lists (Amazon, Elfster or any
+  web page, up to 10), and tick the people they can't give to, for example
+  their partner. Tick as many as you like, as long as there's someone left.
 - **Assignments:** one button draws names, another emails each person their
-  assignment. You can resend to one person, for example after fixing a typo in
+  assignment, along with the wish list links of the person they're buying for.
+  Links are read when the email goes out, so ones added after the draw are
+  included. You can resend to one person, for example after fixing a typo in
   their email. Pairings stay hidden on screen until you click "Show pairings",
   so the organizer can take part too.
 - **History:** every draw that was emailed, plus a table of who each person
@@ -56,7 +59,8 @@ npm run dev
 Open http://localhost:5173 and sign in. In development the password is `admin`
 unless you set `ADMIN_PASSWORD`.
 
-To fill an empty database with sample people, restrictions and two past draws:
+To fill an empty database with sample people, wish lists, restrictions and two
+past draws:
 
 ```bash
 npm run db:seed              # only if the database is empty

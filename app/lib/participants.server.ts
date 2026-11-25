@@ -1,28 +1,48 @@
 import { all, get, run, transaction } from "./db.server";
 
-export type Participant = { id: number; name: string; email: string };
+export type Participant = {
+  id: number;
+  name: string;
+  email: string;
+  /** Links to their wish lists, in the order they were entered. */
+  wishlist: string[];
+};
+
+type ParticipantInput = Omit<Participant, "id">;
 
 /** The giver must never be given the receiver to buy for. */
 export type Restriction = { giverId: number; receiverId: number };
 
-export type ParticipantErrors = { name?: string; email?: string; cantGiveTo?: string };
+export type ParticipantErrors = {
+  name?: string;
+  email?: string;
+  wishlist?: string;
+  cantGiveTo?: string;
+};
 
 type ParseResult =
-  | { ok: true; value: { name: string; email: string } }
+  | { ok: true; value: ParticipantInput }
   | { ok: false; errors: ParticipantErrors };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+export const MAX_WISHLIST_LINKS = 10;
+const MAX_LINK_LENGTH = 2000;
+
 export function listParticipants(): Participant[] {
-  return all<Participant>(
-    "SELECT id, name, email FROM participants ORDER BY name COLLATE NOCASE",
-  );
+  return all<Omit<Participant, "wishlist"> & { wishlist: string }>(
+    "SELECT id, name, email, wishlist FROM participants ORDER BY name COLLATE NOCASE",
+  ).map((p) => ({ ...p, wishlist: JSON.parse(p.wishlist) }));
 }
 
-/** Validates name/email from a form. Pass `id` when editing so the person doesn't clash with themselves. */
+/**
+ * Validates name, email and wish list from a form. Pass `id` when editing so
+ * the person doesn't clash with themselves.
+ */
 export function parseParticipantForm(form: FormData, id?: number): ParseResult {
   const name = String(form.get("name") ?? "").trim();
   const email = String(form.get("email") ?? "").trim().toLowerCase();
+  const wishlist = parseWishlist(String(form.get("wishlist") ?? ""));
   const errors: ParticipantErrors = {};
 
   if (!name) errors.name = "Enter a name.";
@@ -39,26 +59,74 @@ export function parseParticipantForm(form: FormData, id?: number): ParseResult {
     if (taken) errors.email = `${taken.name} already uses this email.`;
   }
 
+  if (wishlist.error) errors.wishlist = wishlist.error;
+
   return Object.keys(errors).length
     ? { ok: false, errors }
-    : { ok: true, value: { name, email } };
+    : { ok: true, value: { name, email, wishlist: wishlist.links } };
 }
 
-export function createParticipant({ name, email }: { name: string; email: string }) {
-  run("INSERT INTO participants (name, email) VALUES (?, ?)", name, email);
+/**
+ * Reads wish list links, one per line. Blank lines and repeats are dropped,
+ * and "https://" is added when it's left off.
+ */
+function parseWishlist(text: string): { links: string[]; error?: string } {
+  const links: string[] = [];
+  for (const [i, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    const link = toLink(line.trim());
+    if (!link) return { links: [], error: `Line ${i + 1} doesn't look like a web link.` };
+    if (!links.includes(link)) links.push(link);
+  }
+  if (links.length > MAX_WISHLIST_LINKS) {
+    return { links: [], error: `Keep it to ${MAX_WISHLIST_LINKS} links or fewer.` };
+  }
+  return { links };
+}
+
+function toLink(text: string): string | null {
+  if (text.length > MAX_LINK_LENGTH) return null;
+  const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(text);
+  let url: URL;
+  try {
+    url = new URL(hasScheme ? text : `https://${text}`);
+  } catch {
+    return null;
+  }
+  // Only plain web pages, since these become clickable links in emails. The
+  // dot rules out a stray word like "Amazon" turning into https://amazon/, and
+  // a user:password@ part is a classic way to disguise where a link goes.
+  const web = url.protocol === "https:" || url.protocol === "http:";
+  const disguised = url.username !== "" || url.password !== "";
+  return web && !disguised && url.hostname.includes(".") ? url.href : null;
+}
+
+/** New people start with no wish list unless one is given. */
+export function createParticipant({
+  name,
+  email,
+  wishlist = [],
+}: Omit<ParticipantInput, "wishlist"> & { wishlist?: string[] }) {
+  run(
+    "INSERT INTO participants (name, email, wishlist) VALUES (?, ?, ?)",
+    name,
+    email,
+    JSON.stringify(wishlist),
+  );
 }
 
 /** Pass `cantGiveTo` to replace who this person can't buy for as well. */
 export function updateParticipant(
   id: number,
-  { name, email }: { name: string; email: string },
+  { name, email, wishlist }: ParticipantInput,
   cantGiveTo?: number[],
 ) {
   transaction(() => {
     const { changes } = run(
-      "UPDATE participants SET name = ?, email = ? WHERE id = ?",
+      "UPDATE participants SET name = ?, email = ?, wishlist = ? WHERE id = ?",
       name,
       email,
+      JSON.stringify(wishlist),
       id,
     );
     // Nothing to attach restrictions to if they were removed in the meantime.

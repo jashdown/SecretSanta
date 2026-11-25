@@ -49,6 +49,11 @@ const migrations = [
     CHECK (giver_id <> receiver_id)
   );
   `,
+  `
+  -- A JSON array of links to the person's wish lists (Amazon, Elfster, …).
+  -- Read when emailing whoever buys for them, so it isn't copied into assignments.
+  ALTER TABLE participants ADD COLUMN wishlist TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 function open() {

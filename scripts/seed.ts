@@ -1,5 +1,5 @@
-// Fills the database with sample people, restrictions and two past draws, so
-// every page has something to show. Run with `npm run db:seed`; add
+// Fills the database with sample people, wish lists, restrictions and two past
+// draws, so every page has something to show. Run with `npm run db:seed`; add
 // `-- --reset` to empty the database first.
 //
 // Emails use example.com, so nothing can reach a real inbox even with SMTP set up.
@@ -32,6 +32,16 @@ const people = {
 type Person = keyof typeof people;
 
 const removed: Person[] = ["ray"];
+
+// A few people have wish lists; everyone else hasn't added one yet.
+const wishlists: Partial<Record<Person, string[]>> = {
+  alice: ["https://www.amazon.com/hz/wishlist/ls/EXAMPLE1ALICE"],
+  chloe: [
+    "https://www.elfster.com/wishlist/example-chloe/",
+    "https://www.amazon.com/hz/wishlist/ls/EXAMPLE2CHLOE",
+  ],
+  hiro: ["https://www.amazon.com/hz/wishlist/ls/EXAMPLE3HIRO"],
+};
 
 // Couples can't draw each other, and Emma can't draw Grace either.
 const restrictions: [giver: Person, receiver: Person][] = [
@@ -85,9 +95,10 @@ db.transaction(() => {
   for (const [key, p] of Object.entries(people) as [Person, (typeof people)[Person]][]) {
     ids[key] = Number(
       db.run(
-        "INSERT INTO participants (name, email, created_at) VALUES (?, ?, ?)",
+        "INSERT INTO participants (name, email, wishlist, created_at) VALUES (?, ?, ?, ?)",
         p.name,
         p.email,
+        JSON.stringify(wishlists[key] ?? []),
         p.joined,
       ).lastInsertRowid,
     );
